@@ -27,3 +27,32 @@ workspace/tmp/
 # IDE
 .idea/
 .vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+
+# Secrets
+.env
+.env.*
+*.key
+
+# Runtime state
+benzaiten.db
+benzaiten.db-shm
+benzaiten.db-wal
+*.log
+
+# Generated workspace files
+workspace/artifacts/
+workspace/tmp/
+
+# IDE
+.idea/
+.vscode/
