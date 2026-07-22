@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from math import isfinite
-from time import perf_counter
-from typing import Any, Literal, Mapping, Sequence
+from typing import Literal
 from uuid import uuid4
-import logging
 
-logger = logging.getLogger(__name__)
 import httpx
 
 
@@ -24,6 +21,7 @@ ModelErrorKind = Literal[
     "server_error",
     "protocol_error",
     "empty_response",
+    "internal_error",
 ]
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +77,20 @@ class ModelClientError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
         self.response_excerpt = response_excerpt
 
+class _ModelRequestValidationError(ValueError):
+    """Raised when the caller supplies an invalid model request."""
+
+
+class _ModelProtocolError(ValueError):
+    """Raised when the model endpoint returns an incompatible response."""
+
+
+class _EmptyModelResponseError(ValueError):
+    """Raised when the model endpoint returns no usable text output."""
+
 
 class ModelClient:
-    CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+    CHAT_COMPLETIONS_PATH = "/chat/completions"
 
     SUPPORTED_TEXT_ROLES = frozenset(
         {
@@ -118,22 +127,36 @@ class ModelClient:
     def _build_request_payload(
             self,
             messages: Sequence[Mapping[str, object]],
-    ) -> dict[str, object] | None:
-        if not messages:
-            logger.warning(
-                "Model request skipped because no messages were provided."
+    ) -> dict[str, object]:
+        if (
+            not isinstance(messages, Sequence)
+            or isinstance(messages, (str, bytes, bytearray))
+        ):
+            raise _ModelRequestValidationError(
+                "Model messages must be a sequence."
             )
-            return None
+        if not messages:
+            raise _ModelRequestValidationError(
+                "At least one model message is required."
+            )
 
         normalized_messages: list[dict[str, str]] = []
 
         for index, message in enumerate(messages):
+            if not isinstance(message, Mapping):
+                raise _ModelRequestValidationError(
+                    f"Message {index} must be a mapping."
+                )
+
+            if not all(isinstance(key, str) for key in message):
+                raise _ModelRequestValidationError(
+                    f"Message {index} contains a non-string field name."
+                )
             unsupported_keys = set(message) - {"role", "content"}
 
             if unsupported_keys:
                 unsupported = ", ".join(sorted(unsupported_keys))
-
-                raise ValueError(
+                raise _ModelRequestValidationError(
                     f"Message {index} contains unsupported fields: "
                     f"{unsupported}."
                 )
@@ -142,25 +165,24 @@ class ModelClient:
             content = message.get("content")
 
             if not isinstance(role, str) or not role:
-                logger.warning(
-                    "Model request skipped: message %s has an invalid role.",
-                    index,
+                raise _ModelRequestValidationError(
+                    f"Message {index} has an invalid role."
                 )
-                return None
+
+            if role not in self.SUPPORTED_TEXT_ROLES:
+                raise _ModelRequestValidationError(
+                    f"Message {index} has unsupported role: {role}."
+                )
 
             if not isinstance(content, str):
-                logger.warning(
-                    "Model request skipped: message %s content is not text.",
-                    index,
+                raise _ModelRequestValidationError(
+                    f"Message {index} content must be text."
                 )
-                return None
 
             if not content.strip():
-                logger.warning(
-                    "Model request skipped: message %s content is empty.",
-                    index,
+                raise _ModelRequestValidationError(
+                    f"Message {index} content cannot be empty."
                 )
-                return None
 
             normalized_messages.append(
                 {
@@ -169,103 +191,235 @@ class ModelClient:
                 }
             )
 
-        return {
+        payload: dict[str, object] = {
             "model": self.config.model_name,
             "messages": normalized_messages,
-            "max_completion_tokens": (
-                self.config.max_completion_tokens
-            ),
-            "temperature": self.config.temperature,
-            "top_p": self.config.top_p,
             "stream": False,
         }
+        if self.config.max_completion_tokens is not None:
+            payload["max_tokens"] = self.config.max_completion_tokens
+
+        if self.config.temperature is not None:
+            payload["temperature"] = self.config.temperature
+
+        if self.config.top_p is not None:
+            payload["top_p"] = self.config.top_p
+
+        return payload
 
 
     def _send_http_request(
             self,
-            request_id: str,
             payload: Mapping[str, object],
     ) -> httpx.Response:
-        try:
-            return self._http_client.post(
-                self.CHAT_COMPLETIONS_PATH,
-                json=payload,
-            )
-        except httpx.HTTPError as error:
-            raise ModelClientError(
-                request_id=None,
-                kind="transport_error",
-                status_code=None,
-                retryable=True,
-                retry_after_seconds=None,
-                response_excerpt=str(error),
-            ) from error
+        return self._http_client.post(
+            self.CHAT_COMPLETIONS_PATH,
+            json=payload,
+        )
 
 
     def _parse_model_response(
             self,
             request_id: str,
             response: httpx.Response,
-            latency_ms: int,
+            latency_ms: float,
     ) -> ModelResponse:
-        response_data = response.json()
+        try:
+            decoded_response: object = response.json()
+        except ValueError as error:
+            raise _ModelProtocolError(
+                "Model endpoint returned malformed JSON."
+            ) from error
 
-        choices = response_data.get("choices") or []
-
-        if not choices:
-            logger.warning(
-                "Model response %s contains no choices.",
-                request_id,
+        if not isinstance(decoded_response, Mapping):
+            raise _ModelProtocolError(
+                "Model response must be a JSON object."
             )
 
-            return ModelResponse(
-                request_id=request_id,
-                server_request_id=response_data.get("id"),
-                model_name=response_data.get(
-                    "model",
-                    self.config.model_name,
-                ),
-                text="",
-                reasoning_text=None,
-                finish_reason="empty_response",
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                latency_ms=latency_ms,
+        response_data: Mapping[object, object] = decoded_response
+        choices_value = response_data.get("choices")
+
+        if choices_value is None:
+            raise _EmptyModelResponseError(
+                "Model response contains no choices."
             )
 
-        choice = choices[0]
-        message = choice.get("message") or {}
-        usage = response_data.get("usage") or {}
+        if (
+            not isinstance(choices_value, Sequence)
+            or isinstance(choices_value, (str, bytes, bytearray))
+        ):
+            raise _ModelProtocolError(
+                "Model response choices must be a sequence."
+            )
 
-        reasoning_text = (
-                message.get("reasoning")
-                or message.get("reasoning_content")
+        if not choices_value:
+            raise _EmptyModelResponseError(
+                "Model response contains no usable choices."
+            )
+
+        first_choice: object = choices_value[0]
+
+        if not isinstance(first_choice, Mapping):
+            raise _ModelProtocolError(
+                "The first model response choice must be an object."
+            )
+
+        choice: Mapping[object, object] = first_choice
+        message_value = choice.get("message")
+
+        if message_value is None:
+            raise _EmptyModelResponseError(
+                "The first model response choice contains no message."
+            )
+
+        if not isinstance(message_value, Mapping):
+            raise _ModelProtocolError(
+                "The model response message must be an object."
+            )
+
+        message: Mapping[object, object] = message_value
+        content_value = message.get("content")
+
+        if content_value is None:
+            raise _EmptyModelResponseError(
+                "The model response message contains no content."
+            )
+
+        if not isinstance(content_value, str):
+            raise _ModelProtocolError(
+                "The model response content must be text."
+            )
+
+        if not content_value.strip():
+            raise _EmptyModelResponseError(
+                "The model response content is empty."
+            )
+
+        reasoning_value = message.get("reasoning")
+
+        if reasoning_value is None:
+            reasoning_value = message.get("reasoning_content")
+
+        if reasoning_value is not None and not isinstance(
+            reasoning_value,
+            str,
+        ):
+            raise _ModelProtocolError(
+                "The model response reasoning content must be text."
+            )
+
+        finish_reason_value = choice.get("finish_reason")
+
+        if (
+            finish_reason_value is not None
+            and not isinstance(finish_reason_value, str)
+        ):
+            raise _ModelProtocolError(
+                "The model response finish reason must be text."
+            )
+
+        server_request_id_value = response_data.get("id")
+
+        if (
+            server_request_id_value is not None
+            and not isinstance(server_request_id_value, str)
+        ):
+            raise _ModelProtocolError(
+                "The model response request ID must be text."
+            )
+
+        model_name_value = response_data.get(
+            "model",
+            self.config.model_name,
+        )
+
+        if not isinstance(model_name_value, str):
+            raise _ModelProtocolError(
+                "The model response model name must be text."
+            )
+
+        usage_value = response_data.get("usage")
+
+        if usage_value is None:
+            usage: Mapping[object, object] = {}
+        elif isinstance(usage_value, Mapping):
+            usage = usage_value
+        else:
+            raise _ModelProtocolError(
+                "The model response usage must be an object."
+            )
+
+        prompt_tokens_value = self._parse_token_count(
+            usage.get("prompt_tokens", 0),
+            "prompt_tokens",
+        )
+        completion_tokens_value = self._parse_token_count(
+            usage.get("completion_tokens", 0),
+            "completion_tokens",
+        )
+        total_tokens_value = self._parse_token_count(
+            usage.get("total_tokens", 0),
+            "total_tokens",
         )
 
         return ModelResponse(
             request_id=request_id,
-            server_request_id=response_data.get("id"),
-            model_name=response_data.get(
-                "model",
-                self.config.model_name,
-            ),
-            text=message.get("content") or "",
-            reasoning_text=reasoning_text,
-            finish_reason=choice.get("finish_reason"),
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get(
-                "completion_tokens",
-                0,
-            ),
-            total_tokens=usage.get("total_tokens", 0),
+            server_request_id=server_request_id_value,
+            model_name=model_name_value,
+            text=content_value,
+            reasoning_text=reasoning_value,
+            finish_reason=finish_reason_value,
+            prompt_tokens=prompt_tokens_value,
+            completion_tokens=completion_tokens_value,
+            total_tokens=total_tokens_value,
             latency_ms=latency_ms,
+        )
+    @staticmethod
+    def _parse_token_count(
+            value: object,
+            field_name: str,
+    ) -> int | None:
+        if value is None:
+            return None
+
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise _ModelProtocolError(
+                f"Model response {field_name} must be an integer."
+            )
+
+        return value
+
+    @staticmethod
+    def _response_indicates_context_length(
+            response: httpx.Response,
+    ) -> bool:
+        if response.status_code == 413:
+            return True
+
+        if response.status_code != 400:
+            return False
+
+        response_text = response.text.lower()
+        context_length_markers = (
+            "context length",
+            "context_length",
+            "context window",
+            "maximum context",
+            "max context",
+            "too many tokens",
+            "token limit",
+            "prompt is too long",
+            "input is too long",
+        )
+
+        return any(
+            marker in response_text
+            for marker in context_length_markers
         )
 
 
     @staticmethod
     def _normalize_model_error(
-            self,
             request_id: str,
             error: Exception,
             response: httpx.Response | None = None,
@@ -273,11 +427,10 @@ class ModelClient:
         if isinstance(error, ModelClientError):
             return error
 
-        error_response = (
-            error.response
-            if isinstance(error, httpx.HTTPStatusError)
-            else response
-        )
+        if isinstance(error, httpx.HTTPStatusError):
+            error_response = error.response
+        else:
+            error_response = response
 
         status_code = (
             error_response.status_code
@@ -305,7 +458,7 @@ class ModelClient:
                     pass
 
         if isinstance(error, httpx.TimeoutException):
-            kind = "timeout"
+            kind: ModelErrorKind = "timeout"
             message = "Model request timed out."
             retryable = True
 
@@ -315,26 +468,52 @@ class ModelClient:
             retryable = True
 
         elif isinstance(error, httpx.HTTPStatusError):
-            kind = "http_status"
             message = f"Model endpoint returned HTTP {status_code}."
-            retryable = (
-                    status_code in {408, 429}
-                    or status_code is not None
-                    and 500 <= status_code < 600
-            )
+
+            if status_code in {401, 403}:
+                kind = "authentication"
+                retryable = False
+            elif status_code == 429:
+                kind = "rate_limit"
+                retryable = True
+            elif (
+                error_response is not None
+                and ModelClient._response_indicates_context_length(
+                    error_response
+                )
+            ):
+                kind = "context_length"
+                retryable = False
+            elif status_code is not None and 400 <= status_code < 500:
+                kind = "bad_request"
+                retryable = status_code == 408
+            elif status_code is not None and 500 <= status_code < 600:
+                kind = "server_error"
+                retryable = True
+            else:
+                kind = "protocol_error"
+                retryable = False
 
         elif isinstance(error, httpx.RequestError):
-            kind = "request"
+            kind = "connection"
             message = "Model request failed."
             retryable = True
+        elif isinstance(error, _ModelRequestValidationError):
+            kind = "bad_request"
+            message = "Invalid model request."
+            retryable = False
 
-        elif isinstance(error, ValueError):
-            kind = "invalid_response"
+        elif isinstance(error, _ModelProtocolError):
+            kind = "protocol_error"
             message = "Model endpoint returned an invalid response."
+            retryable = False
+        elif isinstance(error, _EmptyModelResponseError):
+            kind = "empty_response"
+            message = "Model endpoint returned no usable output."
             retryable = False
 
         else:
-            kind = "unexpected"
+            kind = "internal_error"
             message = "Unexpected model client failure."
             retryable = False
 
@@ -359,49 +538,39 @@ class ModelClient:
     ) -> ModelResponse:
         request_id = uuid4().hex
 
-        payload = self._build_request_payload(messages)
-
-        if payload is None:
-            return ModelResponse(
-                request_id=request_id,
-                server_request_id=None,
-                model_name=self.config.model_name,
-                text="",
-                reasoning_text=None,
-                finish_reason=None,
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-                latency_ms=0,
-            )
-
         response: httpx.Response | None = None
         started_at = time.perf_counter()
 
         try:
-            response = self._send_http_request(
-                request_id=request_id,
+            payload = self._build_request_payload(messages)
+            successful_response = self._send_http_request(
                 payload=payload,
             )
+            response = successful_response
 
-            response.raise_for_status()
+            successful_response.raise_for_status()
 
-            latency_ms = int(
+            latency_ms = (
                 (time.perf_counter() - started_at) * 1000
             )
 
             return self._parse_model_response(
                 request_id=request_id,
-                response=response,
+                response=successful_response,
                 latency_ms=latency_ms,
             )
 
         except Exception as error:
-            raise self._normalize_model_error(
+            normalized_error = self._normalize_model_error(
                 request_id=request_id,
                 error=error,
                 response=response,
-            ) from error
+            )
+
+            if normalized_error is error:
+                raise
+
+            raise normalized_error from error
 
     def close(self) -> None:
         self._http_client.close()

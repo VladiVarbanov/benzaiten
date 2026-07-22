@@ -312,8 +312,6 @@ def start_qwen_server() -> str:
 
     return container_id
 
-    return container_id
-
 
 def main() -> None:
     start_qwen_server()
