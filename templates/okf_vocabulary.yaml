@@ -1,0 +1,38 @@
+source_kinds:
+  - paper
+  - article
+  - book
+  - report
+  - dataset
+  - video
+  - website
+  - documentation
+  - repository
+  - conversation
+  - experiment
+  - idea
+
+knowledge_types:
+  - claim
+  - method
+  - approach
+  - result
+  - limitation
+  - assumption
+  - insight
+  - question
+
+relation_types:
+  - supports
+  - contradicts
+  - extends
+  - applies
+  - depends_on
+  - compares_with
+  - shares_method
+  - shares_problem
+
+verification_statuses:
+  - unreviewed
+  - reviewed
+  - needs_verification
