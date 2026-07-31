@@ -1,0 +1,50 @@
+version: 1
+
+message_kind:
+  - request
+  - order
+  - response
+  - error
+
+work_kind:
+  - planning
+  - execution
+  - review
+  - synthesis
+
+output_format:
+  - json
+  - markdown
+
+control_status:
+  - pending
+  - active
+  - completed
+  - failed
+  - cancelled
+
+priority:
+  - low
+  - medium
+  - high
+  - critical
+
+granularity:
+  - coarse
+  - medium
+  - fine
+
+result_status:
+  - complete
+  - partial
+
+error_category:
+  - rejection
+  - validation
+  - execution
+  - timeout
+  - cancelled
+
+error_source:
+  - orchestrator
+  - agent

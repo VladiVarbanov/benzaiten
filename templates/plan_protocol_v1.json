@@ -1,0 +1,264 @@
+{
+  "protocol": "plan/v1",
+  "plan_id": "<globally unique plan id, stable across revisions>",
+  "revision": 1,
+  "revision_ref": "<plan-id>@r1",
+  "based_on_revision_ref": null,
+  "parent_plan_ref": null,
+  "status": "proposed",
+
+  "goal": "<one-sentence objective this plan must achieve>",
+
+  "approach_summary": [
+    "<key idea 1 of the chosen approach>",
+    "<key idea 2>"
+  ],
+
+  "current_work_ref": "<external work id>",
+
+  "participants": {
+    "proposers": [
+      "<agent id>"
+    ],
+    "supporters": [],
+    "critics": [],
+    "synthesizer": null,
+    "decision_maker": "<agent id with final reasoning authority>",
+    "arbiter": null,
+    "execution_authorizer": "<deterministic orchestrator id>"
+  },
+
+  "process": {
+    "mode": "independent_proposals",
+    "iteration": 1,
+    "max_iterations": 2,
+    "stop_criteria": {
+      "implemented": false,
+      "description": "<future descriptive stopping criterion; no adaptive stopping implemented>"
+    }
+  },
+
+  "deliberation": {
+    "proposals": [
+      {
+        "id": "<proposal id>",
+        "iteration": 1,
+        "author_ref": "<agent id>",
+        "summary": "<concise candidate approach>",
+        "main_points": [
+          "<main proposal point>"
+        ],
+        "reason": "<concise reason for proposing this approach>",
+        "assumptions": [],
+        "message_refs": [],
+        "artifact_refs": [],
+        "disposition": "pending",
+        "disposition_reason": null,
+        "decided_by_ref": null,
+        "decided_in_revision_ref": null
+      }
+    ],
+
+    "support": [
+      {
+        "id": "<support record id>",
+        "author_ref": "<agent id>",
+        "target_kind": "<proposal | step | revision>",
+        "target_ref": "<qualified target reference>",
+        "reason": "<concise reason for support>",
+        "conditions": [],
+        "message_refs": [],
+        "artifact_refs": []
+      }
+    ],
+
+    "critiques": [
+      {
+        "id": "<critique id>",
+        "iteration": 1,
+        "author_ref": "<agent id>",
+        "target_kind": "<proposal | step | revision>",
+        "target_ref": "<qualified target reference>",
+        "severity": "<blocking | major | minor>",
+        "summary": "<concise critique>",
+        "suggested_change_refs": [
+          "<change id>"
+        ],
+        "message_refs": [],
+        "artifact_refs": []
+      }
+    ],
+
+    "suggested_changes": [
+      {
+        "id": "<change id>",
+        "author_ref": "<agent id>",
+        "target_kind": "<proposal | step | revision>",
+        "target_ref": "<qualified target reference>",
+        "description": "<concise suggested modification>",
+        "reason": "<concise reason for the change>",
+        "disposition": "pending",
+        "disposition_reason": null,
+        "decided_by_ref": null,
+        "resolved_in_revision_ref": null,
+        "message_refs": [],
+        "artifact_refs": []
+      }
+    ],
+
+    "decisions": [
+      {
+        "id": "<decision id>",
+        "iteration": 1,
+        "author_ref": "<decision-maker or arbiter agent id>",
+        "type": "<select_proposal | request_revision | finalize | defer | abort>",
+        "target_refs": [],
+        "rationale": "<concise decision rationale>",
+        "accepted_change_refs": [],
+        "rejected_change_refs": [],
+        "deferred_change_refs": [],
+        "rejected_alternatives": [
+          {
+            "target_ref": "<proposal or alternative reference>",
+            "reason": "<concise rejection reason>"
+          }
+        ],
+        "resulting_revision_ref": null,
+        "message_refs": [],
+        "artifact_refs": []
+      }
+    ],
+
+    "revisions": [
+      {
+        "revision_ref": "<plan-id>@r1",
+        "based_on_revision_ref": null,
+        "author_ref": "<proposer, synthesizer, or reviser agent id>",
+        "source_proposal_refs": [],
+        "source_support_refs": [],
+        "source_critique_refs": [],
+        "source_change_refs": [],
+        "change_summary": [
+          "<initial creation or concise description of revision changes>"
+        ],
+        "created_at": "<ISO-8601 timestamp>"
+      }
+    ]
+  },
+
+  "steps": [
+    {
+      "index": 1,
+      "id": "<stable step id, never reused>",
+      "action": "<concise imperative action>",
+      "reason": "<why this step exists>",
+      "target_ref": "<external object, resource, or artifact id>",
+
+      "instructions": [
+        "<bounded instruction or executor constraint>"
+      ],
+
+      "scope_boundary": "<what this step must not do>",
+
+      "expected_result": "<concise and observable expected result>",
+
+      "validation": [
+        "<pass-or-fail validation criterion>"
+      ],
+
+      "depends_on": [],
+      "support_refs": [],
+      "critique_refs": [],
+      "task_ref": null,
+
+      "status": "proposed",
+
+      "on_failure": {
+        "policy": "halt_and_replan",
+        "max_retries": 0,
+        "fallback_step_ref": null,
+        "record_failure": true
+      }
+    }
+  ],
+
+  "final": {
+    "is_final": false,
+    "selected_revision_ref": null,
+    "decision_maker_ref": "<agent id with final reasoning authority>",
+    "decision_reason": null,
+    "unresolved_risks": [],
+    "unresolved_questions": [],
+    "decided_at": null,
+
+    "authorization": {
+      "authorized": false,
+      "authorizer_ref": "<deterministic orchestrator id>",
+      "authorization_record_ref": null,
+      "authorized_at": null
+    }
+  },
+
+  "execution": {
+    "current_step_ref": null,
+    "next_step_ref": null,
+
+    "expected_result_ref": null,
+    "expected_result_snapshot": null,
+
+    "achieved_result": null,
+    "deviation": null,
+
+    "validation_outcome": "not_started",
+    "validation_evidence_refs": [],
+
+    "replan_requested": false,
+    "replan_reason": null,
+
+    "outcomes": []
+  },
+
+  "integrity": {
+    "rules": {
+      "external_objects_by_reference_only": true,
+
+      "plan_self_reference_forbidden": true,
+      "parent_plan_must_differ_from_plan": true,
+      "parent_plan_chain_must_be_acyclic": true,
+
+      "revision_refs_must_be_qualified": true,
+      "revision_self_reference_forbidden": true,
+      "revision_chain_must_be_acyclic": true,
+
+      "step_ids_must_be_unique": true,
+      "step_ids_must_not_be_reused": true,
+      "step_indexes_must_be_contiguous": true,
+
+      "step_dependencies_same_revision_only": true,
+      "step_dependencies_must_reference_existing_steps": true,
+      "step_dependencies_must_reference_lower_indexes": true,
+      "step_self_dependency_forbidden": true,
+      "cross_plan_step_dependencies_forbidden": true,
+
+      "selected_revision_must_equal_current_revision": true,
+      "final_plan_must_not_duplicate_steps": true,
+
+      "execution_requires_final_plan": true,
+      "execution_requires_authorization": true
+    },
+
+    "validation": {
+      "status": "not_checked",
+      "validated_by_ref": null,
+      "validated_at": null,
+      "errors": []
+    }
+  },
+
+  "persistence": {
+    "save": true,
+    "location": "<authoritative location, such as plans/{plan_id}/rev-{revision}.json>",
+    "created_at": "<ISO-8601 timestamp, set by orchestrator>",
+    "updated_at": "<ISO-8601 timestamp, set by orchestrator>"
+  }
+}

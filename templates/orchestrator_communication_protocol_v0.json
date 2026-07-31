@@ -1,0 +1,97 @@
+{
+  "protocol": { "name": "hub-message", "version": "1.0" },
+
+  "message": {
+    "id": "<globally-unique-message-id>",
+    "kind": "request",
+    "created_at": "<iso-8601-utc>",
+    "thread_id": "<exchange-or-workflow-id>",
+    "reply_to": null
+  },
+
+  "route": {
+    "sender": "<logical-identity-of-author>",
+    "receiver": "orchestrator"
+  },
+
+  "session": {
+    "id": "<agent-session-instance-id>"
+  },
+
+  "agent": {
+    "model": "<model-identity-as-known-by-the-agent>"
+  },
+
+
+  "work": {
+  "kind":  "<planning | execution | review | synthesis>",
+  "plan_ref": null,
+  "task": "<task-id>"
+  },
+
+  "task": {
+    "action": "<verb-phrase-of-work>",
+    "target": {
+      "kind": "<target-kind>",
+      "locator": "<exact-target-reference>"
+    },
+    "anchors": [
+      { "kind": "<anchor-kind>", "value": "<stable-reference-point-inside-target>" }
+    ],
+    "entities": [
+      { "kind": "<entity-kind>", "name": "<named-thing-of-interest>" }
+    ],
+    "methods": [ "<named-method-to-apply>" ],
+    "question": "<question-the-work-must-answer>",
+    "reason": "<why-this-work-is-proposed>",
+    "angles": [ "<analytical-angle-1>", "<analytical-angle-2>" ],
+    "granularity": "coarse"
+  },
+
+  "contract": {
+    "output": {
+      "format": "<json | markdown >",
+      "required": [ "<required-output-field>" ],
+      "constraints": [ "<formal-checkable-constraint>" ]
+    },
+    "expected": "<semantic-description-of-a-satisfactory-result>"
+  },
+
+  "control": {
+    "status": "pending",
+    "priority": "medium",
+    "iteration": { "current": 1, "max": 2 },
+    "override": {
+      "requested": false,
+      "scope": null,
+      "proposal": null,
+      "justification": null
+    }
+  },
+
+  "result": {
+    "status": "<complete | partial>",
+    "content": "<payload-conforming-to-contract>",
+    "notes": "<agent-remarks>"
+  },
+
+  "error": {
+    "code": "<stable-machine-code>",
+    "category": "<rejection | validation | execution | timeout | cancelled>",
+    "detail": "<human-readable-explanation>",
+    "retryable": false,
+    "source": "<orchestrator | agent>"
+  },
+
+  "provenance": {
+    "resolved_by": "orchestrator",
+    "resolved_at": "<iso-8601-utc>",
+    "chain": {
+      "agent": "<logical-agent-id>",
+      "session": "<agent-session-instance-id>",
+      "model": "<resolved-model-identity>",
+      "compute_node": "<resolved-compute-node-id>",
+      "host": "<resolved-host-id>"
+    }
+  }
+}

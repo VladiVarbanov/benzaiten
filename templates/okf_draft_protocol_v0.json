@@ -1,0 +1,166 @@
+{
+"protocol": {
+"name": "okf-draft",
+"version": "0.1",
+"purpose": "Structured output of one knowledge-extraction or synthesis pass before creation of an authoritative OKF artifact."
+},
+
+"identity": {
+"draft_id": "<globally-unique-draft-id>",
+"revision": 1,
+"draft_type": "<extraction | synthesis>",
+"status": "generated"
+},
+
+"lineage": {
+"source_ref": "<external-source-id>",
+"parent_draft_refs": [],
+"target_okf_ref": "<preallocated-final-okf-id>"
+},
+
+"context_refs": {
+"work_ref": "<external-work-id>",
+"task_ref": "<external-task-id>",
+"plan_ref": null,
+"message_ref": null
+},
+
+"extraction": {
+"iteration": {
+"current": 1,
+"maximum": 2
+},
+"angles": [
+"<analytical-angle>"
+],
+"granularity": "coarse",
+"focus": "<concise-description-of-what-this-pass-should-extract>"
+},
+
+"draft_content": {
+"proposed_metadata": {
+"kind": "<paper | idea | conference | event | project | concept>",
+"title": "<concise-proposed-title>",
+"description": "<short-proposed-description>",
+"tags": []
+},
+
+"core_idea": "<central-idea-extracted-from-the-source>",
+
+"summary_points": [
+  "<important-summary-point>"
+],
+
+"knowledge_atoms": [
+  {
+    "atom_id": "<stable-draft-local-atom-id>",
+    "kind": "<claim | method | result | definition | limitation | question | observation>",
+    "statement": "<one-concise-self-contained-statement>",
+    "importance": "<low | medium | high>",
+    "support_refs": [],
+    "confidence_note": null
+  }
+],
+
+"methods": [
+  {
+    "method_id": "<draft-local-method-id>",
+    "name": "<method-name>",
+    "description": "<concise-method-description>",
+    "purpose": "<what-the-method-is-used-for>",
+    "support_refs": []
+  }
+],
+
+"applications": [
+  {
+    "application_id": "<draft-local-application-id>",
+    "description": "<possible-or-demonstrated-application>",
+    "support_refs": []
+  }
+],
+
+"limitations": [
+  {
+    "limitation_id": "<draft-local-limitation-id>",
+    "description": "<concise-limitation>",
+    "support_refs": []
+  }
+],
+
+"open_questions": [
+  {
+    "question_id": "<draft-local-question-id>",
+    "question": "<unresolved-question>",
+    "reason": "<why-the-question-matters>",
+    "support_refs": []
+  }
+],
+
+"connection_candidates": [
+  {
+    "connection_id": "<draft-local-connection-id>",
+    "target_ref": "<existing-okf-or-concept-id>",
+    "relation": "<relation-from-okf-vocabulary>",
+    "reason": "<concise-reason-for-the-connection>",
+    "strength": null,
+    "support_refs": []
+  }
+],
+
+"next_actions": [
+  "<possible-follow-up-action>"
+]
+
+},
+
+"source_support": [
+{
+"support_id": "<support-reference-id>",
+"locator": "<page-section-paragraph-figure-table-or-other-stable-location>",
+"supports_content_refs": [],
+"note": "<concise-description-of-the-support>"
+}
+],
+
+"review": {
+"status": "not_reviewed",
+"reviewer_agent_ref": null,
+"accepted_content_refs": [],
+"rejected_content_refs": [],
+"uncertain_content_refs": [],
+"critique": null
+},
+
+"synthesis": {
+"status": "pending",
+"selected_for_synthesis": false,
+"accepted_content_refs": [],
+"rejected_content_refs": [],
+"deferred_content_refs": [],
+"decision_reason": null
+},
+
+"provenance": {
+"created_by_agent_ref": "<agent-id>",
+"model_ref": "<model-id>",
+"prompt_artifact_ref": null,
+"created_at": "<iso-8601-utc>",
+"updated_at": "<iso-8601-utc>"
+},
+
+"persistence": {
+"save_draft": true,
+"save_location": "<draft-storage-path-or-uri>"
+},
+
+"validation": {
+"schema_status": "pending",
+"reference_status": "pending",
+"vocabulary_status": "pending",
+"lineage_status": "pending",
+"validated_by_ref": null,
+"validated_at": null,
+"errors": []
+}
+}

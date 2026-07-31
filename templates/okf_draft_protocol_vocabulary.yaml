@@ -1,0 +1,53 @@
+version: 1
+
+draft_type:
+  - extraction
+  - synthesis
+
+draft_status:
+  - generated
+  - under_review
+  - reviewed
+  - synthesized
+  - rejected
+  - superseded
+  - invalid
+
+granularity:
+  - coarse
+  - medium
+  - fine
+
+knowledge_atom_kind:
+  - claim
+  - method
+  - result
+  - definition
+  - limitation
+  - question
+  - observation
+
+importance:
+  - low
+  - medium
+  - high
+
+review_status:
+  - not_reviewed
+  - in_review
+  - accepted
+  - accepted_with_changes
+  - rejected
+  - inconclusive
+
+synthesis_status:
+  - pending
+  - in_progress
+  - completed
+  - failed
+  - skipped
+
+validation_status:
+  - pending
+  - valid
+  - invalid

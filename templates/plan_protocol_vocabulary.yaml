@@ -1,0 +1,83 @@
+version: 1
+
+planning_level:
+  - normal
+  - deep
+
+plan_status:
+  - proposed
+  - under_review
+  - revising
+  - final
+  - authorized
+  - executing
+  - completed
+  - failed
+  - cancelled
+  - superseded
+
+planning_mode:
+  - independent_proposals
+  - critique
+  - synthesis
+  - self_reflection
+
+proposal_disposition:
+  - candidate
+  - selected
+  - merged
+  - rejected
+  - superseded
+  - withdrawn
+
+critique_severity:
+  - low
+  - medium
+  - high
+  - blocking
+
+change_disposition:
+  - pending
+  - accepted
+  - rejected
+  - deferred
+
+step_status:
+  - proposed
+  - authorized
+  - ready
+  - running
+  - completed
+  - failed
+  - skipped
+  - blocked
+
+failure_mode:
+  - stop
+  - retry
+  - skip
+  - request_replan
+  - escalate
+
+validation_outcome:
+  - not_started
+  - passed
+  - failed
+  - partial
+  - inconclusive
+
+difference_classification:
+  - none
+  - minor
+  - major
+  - unknown
+
+validation_status:
+  - pending
+  - valid
+  - invalid
+
+reference_target_kind:
+  - plan
+  - proposal
+  - step
