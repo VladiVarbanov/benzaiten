@@ -37,46 +37,172 @@ DB_BUSY_TIMEOUT_MS = 15_000
 DATABASE_OWNER_PHYS_HOST = "pc1"
 ALLOW_REMOTE_DB_WRITES = False
 
-
 # =====================================================================
 # 3. DIRECTORY LAYOUT
 # =====================================================================
 
+# ---------------------------------------------------------------------
+# Repository resources
+# ---------------------------------------------------------------------
+
 SRC_DIR = ORCHESTRATOR_ROOT / "src"
 PROMPTS_DIR = ORCHESTRATOR_ROOT / "prompts"
+TEMPLATES_DIR = ORCHESTRATOR_ROOT / "templates"
+
+
+# ---------------------------------------------------------------------
+# Runtime workspace
+#
+# inbox:
+#     Newly submitted inputs awaiting processing.
+#
+# tmp:
+#     Incomplete execution state. Files here are not safe for
+#     downstream consumption.
+#
+# artifacts:
+#     Completed and validated intermediate products that are not yet
+#     authoritative vault knowledge.
+# ---------------------------------------------------------------------
 
 WORKSPACE_DIR = ORCHESTRATOR_ROOT / "workspace"
+
 INBOX_DIR = WORKSPACE_DIR / "inbox"
-ARTIFACTS_DIR = WORKSPACE_DIR / "artifacts"
 TMP_DIR = WORKSPACE_DIR / "tmp"
+ARTIFACTS_DIR = WORKSPACE_DIR / "artifacts"
+
+
+# ---------------------------------------------------------------------
+# Capability-specific temporary and artifact roots
+#
+# Individual source, target, and work directories are created beneath
+# these roots by their respective capability modules.
+# ---------------------------------------------------------------------
+
+DOCUMENT_PREPARATION_TMP_DIR = (
+    TMP_DIR / "document_preparation"
+)
+
+DOCUMENT_PREPARATION_ARTIFACTS_DIR = (
+    ARTIFACTS_DIR / "document_preparation"
+)
+
+KNOWLEDGE_EXTRACTION_TMP_DIR = (
+    TMP_DIR / "knowledge_extraction"
+)
+
+KNOWLEDGE_EXTRACTION_ARTIFACTS_DIR = (
+    ARTIFACTS_DIR / "knowledge_extraction"
+)
+
+
+# ---------------------------------------------------------------------
+# Authoritative persistent storage
+#
+# sources:
+#     Preserved original or captured source material and provenance.
+#
+# OKF:
+#     Authoritative source-derived OKF artifacts.
+#
+# projects:
+#     Knowledge aggregated around individual projects.
+#
+# concepts:
+#     Knowledge aggregated around concepts across multiple sources.
+# ---------------------------------------------------------------------
 
 VAULT_DIR = ORCHESTRATOR_ROOT / "vault"
-OKF_DIR = VAULT_DIR / "OKF"
+
 SOURCES_DIR = VAULT_DIR / "sources"
+OKF_DIR = VAULT_DIR / "OKF"
 OKF_PROJECTS_DIR = VAULT_DIR / "projects"
 OKF_CONCEPTS_DIR = VAULT_DIR / "concepts"
-# Later, maybe:
+
+# Later, if required:
 # OKF_CLAIMS_DIR = VAULT_DIR / "claims"
+
+
+# ---------------------------------------------------------------------
+# OKF resources
+# ---------------------------------------------------------------------
+
+OKF_DRAFT_PROTOCOL_PATH = (
+    TEMPLATES_DIR / "okf_draft_protocol_v0.json"
+)
+
+OKF_DRAFT_PROTOCOL_VOCABULARY_PATH = (
+    TEMPLATES_DIR / "okf_draft_protocol_vocabulary.yaml"
+)
+
+OKF_TEMPLATE_PATH = (
+    TEMPLATES_DIR / "okf_template.md"
+)
+
+OKF_VOCABULARY_PATH = (
+    TEMPLATES_DIR / "okf_vocabulary.yaml"
+)
+
+
+# ---------------------------------------------------------------------
+# Orchestrator communication resources
+# ---------------------------------------------------------------------
+
+ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH = (
+    TEMPLATES_DIR
+    / "orchestrator_communication_protocol_v0.json"
+)
+
+ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH = (
+    TEMPLATES_DIR
+    / "orchestrator_communication_protocol_vocabulary.yaml"
+)
+
+
+# ---------------------------------------------------------------------
+# Planning resources
+# ---------------------------------------------------------------------
+
+PLAN_PROTOCOL_PATH = (
+    TEMPLATES_DIR / "plan_protocol_v1.json"
+)
+
+PLAN_PROTOCOL_VOCABULARY_PATH = (
+    TEMPLATES_DIR / "plan_protocol_vocabulary.yaml"
+)
+
+PLAN_PROTOCOL_NOTES_PATH = (
+    TEMPLATES_DIR / "plan_protocol_notes.md"
+)
 
 
 # =====================================================================
 # 4. DIRECTORY SANDBOXING
 # =====================================================================
 
+# All runtime file operations must remain inside these roots.
 SANDBOX_PATHS = [
     WORKSPACE_DIR,
     VAULT_DIR,
 ]
 
+# Write completed files through a temporary sibling and atomically
+# replace the destination only after successful validation.
 FILE_USE_ATOMIC_REPLACE = True
 FILE_TEMP_SUFFIX = ".tmp"
 
+# Destructive and unrestricted execution remain disabled by default.
 ALLOW_SHELL = False
 ALLOW_DELETE = False
+
+# Persistent artifacts must be verifiable and must not be silently
+# overwritten after promotion.
 REQUIRE_ARTIFACT_HASHES = True
 IMMUTABLE_ARTIFACTS = True
 
-
+RUNTIME_LAYOUT_MARKER_PATH = (
+    WORKSPACE_DIR / ".benzaiten_layout.json"
+)
 # =====================================================================
 # 5. PHYSICAL HOST INSTANCES
 # =====================================================================

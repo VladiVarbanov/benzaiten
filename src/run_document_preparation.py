@@ -7,7 +7,7 @@ No preparation logic lives here.
 """
 
 from __future__ import annotations
-
+from initialization import validate_benzaiten_environment
 import argparse
 import sys
 from pathlib import Path
