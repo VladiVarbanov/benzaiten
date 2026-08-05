@@ -1,4 +1,4 @@
-"""Core structures and small builders for benzaiten.
+"""Core structures and small builders for Benzaiten.
 
 This file defines the shapes of the system:
 - physical hosts
@@ -9,14 +9,13 @@ This file defines the shapes of the system:
 It should not contain concrete project instances such as PC1, Qwen, or Gemma.
 Those belong in config.py.
 """
-
-from __future__ import annotations
-
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from types import MappingProxyType
+from typing import Any, Literal, Mapping, Optional
 
-
+import yaml
 # =====================================================================
 # 1. STANDARDISED TYPE DEFINITIONS
 # =====================================================================
@@ -208,3 +207,63 @@ def has_enough_runtime_memory(
     """Check whether a compute node currently has enough live memory."""
 
     return get_runtime_available_memory_gb(node) >= required_gb
+
+
+# =====================================================================
+# 5. STRUCTURED RESOURCE LOADERS
+# =====================================================================
+
+
+
+def load_json_mapping(path: Path) -> dict[str, Any]:
+    """Load a UTF-8 JSON resource whose root must be a mapping."""
+
+    with path.open("r", encoding="utf-8") as resource_file:
+        data = json.load(resource_file)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"JSON resource root must be a mapping: {path}"
+        )
+
+    return data
+
+
+def load_yaml_mapping(path: Path) -> dict[str, Any]:
+    """Load a UTF-8 YAML resource whose root must be a mapping."""
+
+    with path.open("r", encoding="utf-8") as resource_file:
+        data = yaml.safe_load(resource_file)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"YAML resource root must be a mapping: {path}"
+        )
+
+    return data
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """One deterministic communication-validation problem."""
+
+    field: str
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class CommunicationEnvelope:
+    """Validated immutable communication envelope."""
+
+    data: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class ValidationOutcome:
+    """Result of parsing and validating one communication envelope."""
+
+    valid: bool
+    communication: Optional[CommunicationEnvelope]
+    issues: tuple[ValidationIssue, ...]
+
