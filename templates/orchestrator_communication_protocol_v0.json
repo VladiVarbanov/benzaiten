@@ -3,7 +3,7 @@
 
   "message": {
     "id": "<globally-unique-message-id>",
-    "kind": "request",
+    "kind": "<request | order | response | error>",
     "created_at": "<iso-8601-utc>",
     "thread_id": "<exchange-or-workflow-id>",
     "reply_to": null
@@ -83,7 +83,7 @@
     "source": "<orchestrator | agent>"
   },
 
-  "provenance": {
+  "trace": {
     "resolved_by": "orchestrator",
     "resolved_at": "<iso-8601-utc>",
     "chain": {

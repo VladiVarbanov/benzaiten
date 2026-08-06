@@ -34,9 +34,15 @@ granularity:
   - medium
   - fine
 
+
 result_status:
   - complete
   - partial
+
+semantics:
+  result_status:
+    complete: "The result satisfies the current output contract."
+    partial: "The result contains useful work, but the current output contract is not fully satisfied."
 
 error_category:
   - rejection

@@ -29,7 +29,7 @@ from typing import Any
 
 from config import (
     ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH,
-    ORCHESTRATOR_COMMUNICATION_VOCABULARY_PATH,
+    ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH,
 )
 from structures import (
     CommunicationEnvelope,
@@ -1205,7 +1205,7 @@ def parse_and_validate_communication(
             ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH
         )
         vocabulary = load_yaml_mapping(
-            ORCHESTRATOR_COMMUNICATION_VOCABULARY_PATH
+            ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH
         )
 
         envelope, parse_issues = parse_raw_envelope(raw_envelope)

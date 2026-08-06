@@ -1,7 +1,7 @@
 {
 "protocol": {
 "name": "okf-draft",
-"version": "0.1",
+"version": "0.0",
 "purpose": "Structured output of one knowledge-extraction or synthesis pass before creation of an authoritative OKF artifact."
 },
 
@@ -28,7 +28,7 @@
 "extraction": {
 "iteration": {
 "current": 1,
-"maximum": 2
+"max": 2
 },
 "angles": [
 "<analytical-angle>"

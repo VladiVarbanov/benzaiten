@@ -1,6 +1,7 @@
 version: 1
-
+ # TODO: Re-evaluate <deliberation> container after planning protocol stabilizes.
 planning_level:
+  - instant
   - normal
   - deep
 
@@ -22,7 +23,7 @@ planning_mode:
   - synthesis
   - self_reflection
 
-proposal_disposition:
+proposal_state:
   - candidate
   - selected
   - merged
@@ -30,17 +31,13 @@ proposal_disposition:
   - superseded
   - withdrawn
 
-critique_severity:
+severity:
+# TODO:Replace prompt-based critique severity assignment with validated
+# deterministic or algorithmic criteria when suitable criteria are established. critique_severity:
   - low
   - medium
   - high
   - blocking
-
-change_disposition:
-  - pending
-  - accepted
-  - rejected
-  - deferred
 
 step_status:
   - proposed
@@ -52,7 +49,7 @@ step_status:
   - skipped
   - blocked
 
-failure_mode:
+failure_policy:
   - stop
   - retry
   - skip
@@ -66,12 +63,6 @@ validation_outcome:
   - partial
   - inconclusive
 
-difference_classification:
-  - none
-  - minor
-  - major
-  - unknown
-
 validation_status:
   - pending
   - valid
@@ -81,3 +72,4 @@ reference_target_kind:
   - plan
   - proposal
   - step
+  - revision

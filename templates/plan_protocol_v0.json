@@ -1,5 +1,5 @@
 {
-  "protocol": "plan/v1",
+  "protocol": { "name": "plan", "version": "0.0" },
   "plan_id": "<globally unique plan id, stable across revisions>",
   "revision": 1,
   "revision_ref": "<plan-id>@r1",
@@ -38,7 +38,7 @@
     }
   },
 
-  "deliberation": {
+  "planning_cycle": {
     "proposals": [
       {
         "id": "<proposal id>",
@@ -52,8 +52,8 @@
         "assumptions": [],
         "message_refs": [],
         "artifact_refs": [],
-        "disposition": "pending",
-        "disposition_reason": null,
+        "proposal_state": "candidate",
+        "proposal_reason": null,
         "decided_by_ref": null,
         "decided_in_revision_ref": null
       }
@@ -77,9 +77,9 @@
         "id": "<critique id>",
         "iteration": 1,
         "author_ref": "<agent id>",
-        "target_kind": "<proposal | step | revision>",
+        "target_kind": "<proposal | step | revision | revision >",
         "target_ref": "<qualified target reference>",
-        "severity": "<blocking | major | minor>",
+        "severity": "<blocking | major | minor | low>",
         "summary": "<concise critique>",
         "suggested_change_refs": [
           "<change id>"
@@ -93,12 +93,12 @@
       {
         "id": "<change id>",
         "author_ref": "<agent id>",
-        "target_kind": "<proposal | step | revision>",
+        "target_kind": "<proposal | step | revision | revision>",
         "target_ref": "<qualified target reference>",
         "description": "<concise suggested modification>",
         "reason": "<concise reason for the change>",
-        "disposition": "pending",
-        "disposition_reason": null,
+        "proposal_state": "pending",
+        "proposal_reason": null,
         "decided_by_ref": null,
         "resolved_in_revision_ref": null,
         "message_refs": [],
@@ -174,7 +174,7 @@
       "status": "proposed",
 
       "on_failure": {
-        "policy": "halt_and_replan",
+        "policy": "<stop | retry | skip | request_replan | escalate>",
         "max_retries": 0,
         "fallback_step_ref": null,
         "record_failure": true

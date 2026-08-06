@@ -153,7 +153,7 @@ ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH = (
     / "orchestrator_communication_protocol_v0.json"
 )
 
-ORCHESTRATOR_COMMUNICATION_VOCABULARY_PATH = (
+ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH = (
     TEMPLATES_DIR
     / "orchestrator_communication_protocol_vocabulary.yaml"
 )
@@ -164,7 +164,7 @@ ORCHESTRATOR_COMMUNICATION_VOCABULARY_PATH = (
 # ---------------------------------------------------------------------
 
 PLAN_PROTOCOL_PATH = (
-    TEMPLATES_DIR / "plan_protocol_v1.json"
+    TEMPLATES_DIR / "plan_protocol_v0.json"
 )
 
 PLAN_PROTOCOL_VOCABULARY_PATH = (
