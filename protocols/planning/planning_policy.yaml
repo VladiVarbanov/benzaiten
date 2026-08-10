@@ -1,0 +1,179 @@
+version: 1
+
+planning_levels:
+  instant:
+    default: false
+    iteration_maximum: 1
+    purpose: single_pass_planning
+    independent_branches: one_assigned_planner
+    deliberation: optional
+    required_outcome:
+      - validated_structured_plan
+
+  normal:
+    default: true
+    iteration_maximum: 3
+    purpose: default_model_led_deliberation
+    independent_branches: all_assigned_planners
+    deliberation: required_when_multiple_participants_are_assigned
+    required_outcome:
+      - validated_independent_candidate_set
+      - validated_deliberation_or_revision
+      - validated_converged_plan
+
+  deep:
+    default: false
+    iteration_maximum: 5
+    purpose: expanded_or_escalated_deliberation
+    independent_branches: all_assigned_planners
+    deliberation: expanded
+    required_outcome:
+      - validated_independent_candidate_set
+      - validated_critique
+      - validated_revision_and_evidence_expansion
+      - validated_synthesis_or_adversarial_review
+      - validated_final_plan
+
+planning_level_selection:
+  assessed_dimensions:
+    - clarity
+    - difficulty
+    - consequences
+    - uncertainty
+    - multi_model_deliberation_need
+
+  model_role:
+    - recommend_planning_level
+    - justify_recommendation
+    - request_escalation_when_needed
+
+  coordinator_role:
+    - validate_level_recommendation
+    - assign_authoritative_level
+    - map_level_to_iteration_maximum
+    - approve_or_reject_escalation
+
+iteration_semantics:
+  advances_on:
+    - validated_candidate_set
+    - validated_material_revision
+    - validated_deliberation_resolution
+    - validated_synthesis
+    - validated_final_plan
+    - validated_escalation_checkpoint
+
+  does_not_advance_on:
+    - model_call
+    - clarification_question
+    - question_answer
+    - source_request
+    - source_retrieval
+    - retry
+    - failed_response
+    - invalid_artifact
+    - non_material_restatement
+
+planning_cycle:
+  stages:
+    - preflight
+    - independent_proposal
+    - deliberation
+    - revision
+    - synthesis
+    - validation
+    - escalation
+    - completed
+
+  activities:
+    - inspect_context
+    - propose
+    - ask_question
+    - answer_question
+    - critique
+    - defend
+    - retrieve_evidence
+    - revise
+    - synthesize
+    - validate
+    - request_escalation
+
+  stage_iteration_relation: non_positional
+  clarification_allowed_in_all_stages: true
+  multiple_activities_per_iteration: true
+  activities_may_repeat_without_iteration_advance: true
+
+question_policy:
+  material_dimensions:
+    - goal
+    - output_contract
+    - required_inputs
+    - constraints
+    - authority
+    - evidence
+    - execution_feasibility
+    - dependency_order
+    - critique_resolution
+
+  resolution_order:
+    - supplied_context
+    - authorized_local_resources
+    - authorized_source_retrieval
+    - assigned_peer_model
+    - higher_model_or_arbiter
+    - user_or_decision_maker
+
+  require_anchor: true
+  require_planning_impact: true
+  require_blocking_status: true
+
+source_policy:
+  fixed_source_count: false
+  initial_selection: model_led
+  independent_per_branch: true
+  explicit_source_binding_only_when_ordered: true
+
+  source_states:
+    - supplied
+    - retrieved
+    - requested
+    - unavailable
+
+  additional_evidence_allowed_during_deliberation: true
+  verification_claim_requires_access: true
+  record_evidence_limitations: true
+
+convergence_policy:
+  preserve_meaningful_disagreement: true
+
+  decision_outcomes:
+    - accepted
+    - rejected
+    - merged
+    - deferred
+    - escalated
+
+  higher_authority_triggers:
+    - authorization_required
+    - policy_decision_required
+    - ownership_decision_required
+    - unresolved_risk_acceptance
+    - unresolved_material_disagreement
+
+escalation_policy:
+  preserve_plan_id: true
+  increment_revision: true
+  preserve_iteration_current: true
+  preserve_validated_artifacts: true
+  continue_from_checkpoint: true
+  restart_plan: false
+
+coordinator_governance:
+  - route_communication
+  - enforce_branch_isolation
+  - validate_stage_artifacts
+  - advance_iterations
+  - decide_discussion_continuation
+  - approve_evidence_requests
+  - approve_escalation
+  - route_higher_authority_requests
+  - finalize_convergence

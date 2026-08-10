@@ -1,125 +1,151 @@
 {
   "layout_version": 1,
-
   "stable_directories": {
+    "src": "src",
+    "prompts": "prompts",
+    "protocols": "protocols",
+    "communication_protocols": "protocols/communication",
+    "planning_protocols": "protocols/planning",
+    "planning_protocols_old": "protocols/planning/old",
+    "knowledge_protocols": "protocols/knowledge",
+    "templates": "templates",
     "workspace": "workspace",
     "inbox": "workspace/inbox",
-
     "tmp": "workspace/tmp",
     "document_preparation_tmp": "workspace/tmp/document_preparation",
     "knowledge_extraction_tmp": "workspace/tmp/knowledge_extraction",
-
     "artifacts": "workspace/artifacts",
     "document_preparation_artifacts": "workspace/artifacts/document_preparation",
     "knowledge_extraction_artifacts": "workspace/artifacts/knowledge_extraction",
-
     "vault": "vault",
     "sources": "vault/sources",
     "okf": "vault/OKF",
     "projects": "vault/projects",
     "concepts": "vault/concepts"
   },
-
   "dynamic_directories": {
     "document_preparation_tmp_work": {
       "pattern": "workspace/tmp/document_preparation/{source_id}/{preparation_work_id}",
       "owner": "document_preparation",
       "purpose": "incomplete document-preparation execution"
     },
-
     "document_preparation_artifact_work": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}",
       "owner": "document_preparation",
       "purpose": "completed document-preparation artifacts"
     },
-
     "document_preparation_images": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/images",
       "owner": "document_preparation",
       "purpose": "extracted images"
     },
-
     "document_preparation_tables": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/tables",
       "owner": "document_preparation",
       "purpose": "extracted tables"
     },
-
     "document_preparation_chunks": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/chunks",
       "owner": "document_preparation",
       "purpose": "prepared Markdown chunks"
     },
-
     "knowledge_extraction_tmp_work": {
       "pattern": "workspace/tmp/knowledge_extraction/{target_okf_id}/{extraction_work_id}",
       "owner": "knowledge_extraction",
       "purpose": "incomplete knowledge-extraction execution"
     },
-
     "knowledge_extraction_artifact_work": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}",
       "owner": "knowledge_extraction",
       "purpose": "completed knowledge-extraction artifacts"
     },
-
     "knowledge_extraction_responses": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}/responses",
       "owner": "knowledge_extraction",
       "purpose": "raw model responses"
     },
-
     "knowledge_extraction_drafts": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}/drafts",
       "owner": "knowledge_extraction",
       "purpose": "validated OKF Drafts"
     },
-
     "knowledge_extraction_synthesis": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}/synthesis",
       "owner": "knowledge_extraction",
       "purpose": "synthesis artifacts"
     },
-
     "source": {
       "pattern": "vault/sources/{source_id}",
       "owner": "source_management",
       "purpose": "authoritative source record"
     }
   },
-
   "file_patterns": {
     "prepared_markdown": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/prepared.md",
       "owner": "document_preparation"
     },
-
     "page_map": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/page_map.json",
       "owner": "document_preparation"
     },
-
     "preparation_manifest": {
       "pattern": "workspace/artifacts/document_preparation/{source_id}/{preparation_work_id}/preparation_manifest.json",
       "owner": "document_preparation"
     },
-
     "extraction_manifest": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}/extraction_manifest.json",
       "owner": "knowledge_extraction"
     },
-
     "source_manifest": {
       "pattern": "vault/sources/{source_id}/source_manifest.json",
       "owner": "source_management"
     },
-
     "authoritative_okf": {
       "pattern": "vault/OKF/{target_okf_id}.md",
       "owner": "knowledge_extraction"
+    },
+    "planning_system_prompt": {
+      "pattern": "prompts/planning_system_prompt.md",
+      "owner": "planning"
+    },
+    "communication_protocol": {
+      "pattern": "protocols/communication/orchestrator_communication_protocol_v0.json",
+      "owner": "orchestrator_communication"
+    },
+    "communication_protocol_vocabulary": {
+      "pattern": "protocols/communication/orchestrator_communication_protocol_vocabulary.yaml",
+      "owner": "orchestrator_communication"
+    },
+    "plan_protocol": {
+      "pattern": "protocols/planning/plan_protocol_v1.json",
+      "owner": "planning"
+    },
+    "plan_protocol_vocabulary": {
+      "pattern": "protocols/planning/plan_protocol_vocabulary.yaml",
+      "owner": "planning"
+    },
+    "planning_policy": {
+      "pattern": "protocols/planning/planning_policy.yaml",
+      "owner": "planning"
+    },
+    "okf_draft_protocol": {
+      "pattern": "protocols/knowledge/okf_draft_protocol_v0.json",
+      "owner": "knowledge_extraction"
+    },
+    "okf_draft_protocol_vocabulary": {
+      "pattern": "protocols/knowledge/okf_draft_protocol_vocabulary.yaml",
+      "owner": "knowledge_extraction"
+    },
+    "okf_template": {
+      "pattern": "templates/okf_template.md",
+      "owner": "knowledge_extraction"
+    },
+    "okf_vocabulary": {
+      "pattern": "templates/okf_vocabulary.yaml",
+      "owner": "knowledge_extraction"
     }
   },
-
   "placeholders": {
     "source_id": {
       "type": "filesystem_safe_id"
