@@ -21,6 +21,8 @@ def test_pc2_trial_model_is_qwen_remote_openai_endpoint() -> None:
     assert urlparse(endpoint_url).port == model.endpoint_port
     assert model.model_name == QWEN_SERVER_PROFILE.served_model_name
     assert model.endpoint_port == QWEN_SERVER_PROFILE.host_port
+    assert QWEN_SERVER_PROFILE.image == "vllm/vllm-openai:v0.23.0"
+    assert not QWEN_SERVER_PROFILE.image.startswith("sha256:")
 
 
 def test_gemma_uses_one_local_openai_vllm_definition() -> None:
