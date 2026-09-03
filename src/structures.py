@@ -25,10 +25,15 @@ AccessType = Literal["local", "ssh"]
 MemoryType = Literal["system_ram", "vram"]
 
 ModelRole = Literal["agent", "coder", "summarizer", "reasoning", "reviewer"]
-AgentRole = Literal["orchestrator", "state_machine", "agent", "operator", "reviewer", "reasoning_worker"]
+AgentRole = Literal[
+    "task_executive", "director", "primary_worker", "reviewer",
+    "challenger", "tool", "orchestrator", "state_machine", "agent",
+    "operator", "reasoning_worker",
+]
 
 ModelInterfaceType = Literal["openai_compatible_api", "cli"]
 AgentInterfaceType = Literal["python_subprocess", "anythingllm_api"]
+WorkerKind = Literal["model", "agent", "tool"]
 
 
 # =====================================================================
@@ -116,6 +121,17 @@ class AgentStruct:
     max_tool_calls_per_task: int
     max_file_read_lines: int
     session_isolation: bool
+
+
+@dataclass(frozen=True)
+class LogicalContextStruct:
+    """Independent participant context backed by one worker kind."""
+
+    name: str
+    participant_role: str
+    worker_kind: WorkerKind
+    worker_ref: str
+    session_isolation: bool = True
 
 
 # =====================================================================

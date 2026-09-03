@@ -1,11 +1,23 @@
-"""Narrow deterministic orchestration for Benzaiten runtime stages."""
+"""Trusted deterministic Task Executive machinery for Benzaiten.
+
+The historical filename remains temporarily to avoid unnecessary import churn.
+This module executes and validates Director-selected work; it does not choose
+the next semantic action.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from config import (
+    ACTIONS,
+    AGENTS,
+    LEGAL_ACTIONS_BY_STATE,
+    LOGICAL_CONTEXTS,
+    MODELS,
+    PARTICIPANT_ROLE_CONTEXTS,
     ARTIFACTS_DIR,
     DB_PATH,
     INBOX_DIR,
@@ -20,11 +32,11 @@ from config import (
     SOURCES_DIR,
     TMP_DIR,
     VAULT_DIR,
-    WORKSPACE_DIR, SRC_DIR, PROMPTS_DIR, TEMPLATES_DIR, OKF_DRAFT_PROTOCOL_PATH, OKF_TEMPLATE_PATH,
-    OKF_DRAFT_PROTOCOL_VOCABULARY_PATH, OKF_VOCABULARY_PATH, ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH,
-    ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH, PLAN_PROTOCOL_PATH, PLAN_PROTOCOL_VOCABULARY_PATH,
-    PLAN_PROTOCOL_NOTES_PATH,
+    WORKSPACE_DIR,
 )
+
+from director import DirectorTask
+from structures import AgentStruct, LogicalContextStruct, ModelStruct, WorkerKind
 
 if TYPE_CHECKING:
     from document_preparation import PDFPreparationResult
@@ -55,83 +67,6 @@ RUNTIME_DIRECTORIES = (
 )
 
 
-REQUIRED_RESOURCE_DIRECTORIES = (
-    SRC_DIR,
-    PROMPTS_DIR,
-    TEMPLATES_DIR,
-)
-
-
-REQUIRED_TEMPLATE_FILES = (
-    OKF_DRAFT_PROTOCOL_PATH,
-    OKF_DRAFT_PROTOCOL_VOCABULARY_PATH,
-    OKF_TEMPLATE_PATH,
-    OKF_VOCABULARY_PATH,
-
-    ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH,
-    ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH,
-
-    PLAN_PROTOCOL_PATH,
-    PLAN_PROTOCOL_VOCABULARY_PATH,
-    PLAN_PROTOCOL_NOTES_PATH,
-)
-
-
-ACTIONS = {
-    "ingest_file": {
-        "enabled": True,
-        "input_kinds": ["source_file"],
-        "output_kind": "ingested_file",
-    },
-    "convert_to_md": {
-        "enabled": True,
-        "input_kinds": ["ingested_file"],
-        "output_kind": "markdown",
-    },
-    "summarize": {
-        "enabled": True,
-        "model": "qwen",
-        "prompt": "summarize.md",
-        "input_kinds": ["markdown"],
-        "output_kind": "summary",
-    },
-    "extract_okf": {
-        "enabled": True,
-        "model": "qwen",
-        "prompt": "extract_okf.md",
-        "input_kinds": ["summary"],
-        "output_kind": "okf_draft",
-    },
-    "verify_okf": {
-        "enabled": True,
-        "model": "qwen",
-        "prompt": "verify_okf.md",
-        "input_kinds": ["okf_draft"],
-        "output_kind": "verified_okf",
-    },
-    "write_okf": {
-        "enabled": True,
-        "input_kinds": ["verified_okf"],
-        "output_kind": "written_okf",
-    },
-}
-
-
-STATE_MACHINE = {
-    "start_kind": "source_file",
-    "done_kind": "written_okf",
-    "transitions": {
-        "source_file": "ingest_file",
-        "ingested_file": "convert_to_md",
-        "markdown": "summarize",
-        "summary": "extract_okf",
-        "okf_draft": "verify_okf",
-        "verified_okf": "write_okf",
-        "written_okf": "done",
-    },
-}
-
-
 def ensure_runtime_directories() -> tuple[Path, ...]:
     """Create the configured runtime directory tree without clearing it."""
 
@@ -141,26 +76,107 @@ def ensure_runtime_directories() -> tuple[Path, ...]:
     return RUNTIME_DIRECTORIES
 
 
-def get_next_action(current_kind: str) -> str:
-    """Return the configured deterministic transition for an artifact kind."""
+def get_legal_actions(current_kind: str) -> tuple[str, ...]:
+    """Return what may happen without selecting what should happen."""
 
-    transitions = STATE_MACHINE["transitions"]
+    try:
+        legal_actions = LEGAL_ACTIONS_BY_STATE[current_kind]
+    except KeyError as exc:
+        raise ValueError(f"Unknown execution state: {current_kind}") from exc
 
-    if not isinstance(transitions, dict):
-        raise RuntimeError("STATE_MACHINE transitions are invalid.")
-
-    next_action = transitions.get(current_kind)
-
-    if not isinstance(next_action, str):
-        raise ValueError(f"No transition exists for kind: {current_kind}")
-
-    if next_action != "done" and next_action not in ACTIONS:
+    unknown_actions = set(legal_actions) - set(ACTIONS)
+    if unknown_actions:
         raise RuntimeError(
-            f"Transition for {current_kind} references unknown action: "
-            f"{next_action}"
+            "Legal state references unregistered actions: "
+            f"{sorted(unknown_actions)}"
+        )
+    return legal_actions
+
+
+def validate_selected_action(current_kind: str, action: str) -> None:
+    """Validate an action already selected by the Director."""
+
+    if action not in get_legal_actions(current_kind):
+        raise ValueError(
+            f"Action {action!r} is not legal from state {current_kind!r}."
+        )
+    if not ACTIONS[action].get("enabled", False):
+        raise RuntimeError(f"Action is registered but unavailable: {action}")
+
+
+@dataclass(frozen=True)
+class WorkerAssignment:
+    """Concrete worker selected by Task Executive for a semantic role."""
+
+    participant_role: str
+    logical_context: LogicalContextStruct
+    worker_kind: WorkerKind
+    model: ModelStruct | None = None
+    agent: AgentStruct | None = None
+    tool_ref: str | None = None
+
+
+def resolve_participant_role(participant_role: str) -> WorkerAssignment:
+    """Resolve a semantic role according to its configured worker kind."""
+
+    try:
+        context_name = PARTICIPANT_ROLE_CONTEXTS[participant_role]
+        context = LOGICAL_CONTEXTS[context_name]
+    except KeyError as exc:
+        raise ValueError(
+            f"No configured participant for role: {participant_role}"
+        ) from exc
+
+    try:
+        if context.worker_kind == "model":
+            return WorkerAssignment(
+                participant_role=participant_role,
+                logical_context=context,
+                worker_kind="model",
+                model=MODELS[context.worker_ref],
+            )
+        if context.worker_kind == "agent":
+            return WorkerAssignment(
+                participant_role=participant_role,
+                logical_context=context,
+                worker_kind="agent",
+                agent=AGENTS[context.worker_ref],
+            )
+    except KeyError as exc:
+        raise ValueError(
+            f"Configured {context.worker_kind} is unavailable: "
+            f"{context.worker_ref}"
+        ) from exc
+
+    if context.worker_kind == "tool":
+        # Version 0 has no tool registry. Preserve the distinct reference so
+        # later Task Executive machinery can resolve it without conflation.
+        return WorkerAssignment(
+            participant_role=participant_role,
+            logical_context=context,
+            worker_kind="tool",
+            tool_ref=context.worker_ref,
         )
 
-    return next_action
+    raise RuntimeError(f"Unsupported worker kind: {context.worker_kind}")
+
+
+def prepare_director_task(
+    task: DirectorTask,
+    *,
+    current_kind: str,
+    action: str,
+) -> dict[str, object]:
+    """Validate and resolve a Director request without executing it yet."""
+
+    validate_selected_action(current_kind, action)
+    resolved = resolve_participant_role(task.participant_role)
+    return {
+        "task": task,
+        "action": action,
+        "action_definition": ACTIONS[action],
+        "resolved_participant": resolved,
+    }
 
 
 def run_pdf_preparation_stage(

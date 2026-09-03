@@ -1,5 +1,5 @@
 {
-  "protocol": { "name": "plan", "version": "0.0" },
+  "protocol": { "name": "plan", "version": "v0" },
   "plan_id": "<globally unique plan id, stable across revisions>",
   "revision": 1,
   "revision_ref": "<plan-id>@r1",
@@ -24,14 +24,15 @@
     "critics": [],
     "synthesizer": null,
     "decision_maker": "<agent id with final reasoning authority>",
-    "arbiter": null,
-    "execution_authorizer": "<deterministic orchestrator id>"
+    "arbiter": null
   },
 
   "process": {
     "mode": "independent_proposals",
-    "iteration": 1,
-    "max_iterations": 2,
+    "iteration": {
+      "current": 1,
+      "maximum": 2
+    },
     "stop_criteria": {
       "implemented": false,
       "description": "<future descriptive stopping criterion; no adaptive stopping implemented>"
@@ -171,14 +172,7 @@
       "critique_refs": [],
       "task_ref": null,
 
-      "status": "proposed",
-
-      "on_failure": {
-        "policy": "<stop | retry | skip | request_replan | escalate>",
-        "max_retries": 0,
-        "fallback_step_ref": null,
-        "record_failure": true
-      }
+      "status": "proposed"
     }
   ],
 
@@ -189,34 +183,9 @@
     "decision_reason": null,
     "unresolved_risks": [],
     "unresolved_questions": [],
-    "decided_at": null,
-
-    "authorization": {
-      "authorized": false,
-      "authorizer_ref": "<deterministic orchestrator id>",
-      "authorization_record_ref": null,
-      "authorized_at": null
-    }
+    "decided_at": null
   },
 
-  "execution": {
-    "current_step_ref": null,
-    "next_step_ref": null,
-
-    "expected_result_ref": null,
-    "expected_result_snapshot": null,
-
-    "achieved_result": null,
-    "deviation": null,
-
-    "validation_outcome": "not_started",
-    "validation_evidence_refs": [],
-
-    "replan_requested": false,
-    "replan_reason": null,
-
-    "outcomes": []
-  },
 
   "integrity": {
     "rules": {
@@ -253,12 +222,5 @@
       "validated_at": null,
       "errors": []
     }
-  },
-
-  "persistence": {
-    "save": true,
-    "location": "<authoritative location, such as plans/{plan_id}/rev-{revision}.json>",
-    "created_at": "<ISO-8601 timestamp, set by orchestrator>",
-    "updated_at": "<ISO-8601 timestamp, set by orchestrator>"
   }
 }

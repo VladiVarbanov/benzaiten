@@ -1,0 +1,45 @@
+{
+  "protocol": {
+    "name": "director-task",
+    "version": "v0",
+    "purpose": "Semantic task intent selected by the Director for deterministic execution."
+  },
+  "task": {
+    "task_id": "<stable-task-id>",
+    "job_ref": "<semantic-job-or-mandate-ref>",
+    "capability": "<knowledge_extraction | knowledge_synthesis>",
+    "participant_role": "<primary_worker | reviewer | challenger | tool>",
+    "objective": "<semantic-outcome-needed-now>",
+    "input_refs": [],
+    "instruction": "<optional-bounded-semantic-instruction>",
+    "work_kind": "<optional-planning | execution | review | synthesis>",
+    "plan_ref": "<optional-plan-ref>",
+    "action": "<optional-semantic-operation>",
+    "target": {
+      "kind": "<logical-target-kind>",
+      "locator": "<stable-logical-reference>"
+    },
+    "anchors": [
+      {
+        "kind": "<anchor-kind>",
+        "value": "<stable-reference-point>"
+      }
+    ],
+    "entities": [
+      {
+        "kind": "<entity-kind>",
+        "name": "<named-thing-of-interest>"
+      }
+    ],
+    "focus": {
+      "questions": [],
+      "angles": [],
+      "granularity": "<coarse | medium | fine>"
+    },
+    "reason": "<optional-rationale>",
+    "requirements": [],
+    "acceptance": "<optional-semantic-acceptance-criterion>",
+    "output_contract_ref": "<optional-capability-output-contract-ref>",
+    "external_authority_ref": "<optional-future-authority-ref>"
+  }
+}

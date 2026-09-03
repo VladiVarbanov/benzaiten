@@ -1,0 +1,17 @@
+version: v0
+
+message_kind:
+  - request
+  - order
+  - response
+  - error
+
+reference_kind:
+  - director_task
+  - task_execution
+
+semantics:
+  session:
+    description: Logical communication session; not a model deployment identity.
+  override:
+    description: Optional exception proposal carried by communication; it grants no semantic or execution authority.

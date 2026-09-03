@@ -1,4 +1,4 @@
-version: 1
+version: v0
 
 planning_levels:
   instant:
@@ -47,11 +47,13 @@ planning_level_selection:
     - justify_recommendation
     - request_escalation_when_needed
 
-  coordinator_role:
+  director_role:
     - validate_level_recommendation
     - assign_authoritative_level
-    - map_level_to_iteration_maximum
     - approve_or_reject_escalation
+
+  task_executive_role:
+    - map_level_to_iteration_maximum
 
 iteration_semantics:
   advances_on:
@@ -167,13 +169,18 @@ escalation_policy:
   continue_from_checkpoint: true
   restart_plan: false
 
-coordinator_governance:
-  - route_communication
-  - enforce_branch_isolation
-  - validate_stage_artifacts
+director_governance:
+  - evaluate_stage_artifacts
   - advance_iterations
   - decide_discussion_continuation
   - approve_evidence_requests
   - approve_escalation
-  - route_higher_authority_requests
   - finalize_convergence
+
+task_executive_governance:
+  - enforce_branch_isolation
+  - validate_stage_artifact_contracts
+  - route_higher_authority_requests
+
+communication_governance:
+  - route_communication

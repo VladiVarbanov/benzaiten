@@ -4,11 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import (
-    KNOWLEDGE_EXTRACTION_ARTIFACTS_DIR,
-    KNOWLEDGE_EXTRACTION_TMP_DIR,
-    OKF_DIR,
-)
+from initialization import resolve_layout_path
 
 
 @dataclass(frozen=True)
@@ -91,19 +87,22 @@ def create_extraction_context(
             f"{prepared_markdown_path}"
         )
 
-    temporary_dir = (
-        KNOWLEDGE_EXTRACTION_TMP_DIR
-        / target_okf_id
-        / work_id
+    layout_ids = {
+        "target_okf_id": target_okf_id,
+        "extraction_work_id": work_id,
+    }
+    temporary_dir = resolve_layout_path(
+        "knowledge_extraction_tmp_work",
+        **layout_ids,
     )
-
-    artifacts_dir = (
-        KNOWLEDGE_EXTRACTION_ARTIFACTS_DIR
-        / target_okf_id
-        / work_id
+    artifacts_dir = resolve_layout_path(
+        "knowledge_extraction_artifact_work",
+        **layout_ids,
     )
-
-    target_okf_path = OKF_DIR / f"{target_okf_id}.md"
+    target_okf_path = resolve_layout_path(
+        "authoritative_okf",
+        target_okf_id=target_okf_id,
+    )
 
     return ExtractionContext(
         source_ref=source_ref,

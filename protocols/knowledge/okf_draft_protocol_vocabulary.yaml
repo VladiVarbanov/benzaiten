@@ -1,4 +1,4 @@
-version: 1
+version: v0
 
 draft_type:
   - extraction
@@ -47,7 +47,6 @@ synthesis_status:
   - failed
   - skipped
 
-validation_status:
-  - pending
-  - valid
-  - invalid
+semantics:
+  iteration:
+    description: Snapshot of authoritative semantic job iteration when the draft was accepted; never the authoritative counter.

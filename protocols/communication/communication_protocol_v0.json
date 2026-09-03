@@ -1,0 +1,30 @@
+{
+  "protocol": {
+    "name": "managed-communication",
+    "version": "v0"
+  },
+  "message": {
+    "id": "<globally-unique-message-id>",
+    "kind": "<request | order | response | error>",
+    "created_at": "<iso-8601-utc>",
+    "thread_id": "<exchange-or-workflow-id>",
+    "reply_to": null
+  },
+  "route": {
+    "sender": "<logical-identity-of-author>",
+    "receiver": "<logical-identity-of-recipient>"
+  },
+  "session": {
+    "id": "<logical-session-instance-id>"
+  },
+  "references": {
+    "director_task_ref": null,
+    "execution_ref": null
+  },
+  "override": {
+    "requested": false,
+    "scope": null,
+    "proposal": null,
+    "justification": null
+  }
+}

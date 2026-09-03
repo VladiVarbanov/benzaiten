@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import socket
-import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -21,11 +20,10 @@ from model_client import (  # noqa: E402
     ModelResponse,
 )
 from qwen_server import (  # noqa: E402
-    CONTAINER_NAME,
-    HOST_PORT,
-    SERVED_MODEL_NAME,
+    QWEN_SERVER_PROFILE,
     get_qwen_container_state,
     start_qwen_server,
+    stop_qwen_server,
 )
 
 
@@ -48,18 +46,7 @@ def is_port_occupied(port: int) -> bool:
 def stop_owned_qwen_server() -> None:
     """Stop the Qwen container started by this smoke-test run."""
 
-    result = subprocess.run(
-        ["docker", "stop", CONTAINER_NAME],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if result.returncode != 0:
-        error_message = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(
-            f"Could not stop owned Qwen container: {error_message}"
-        )
+    stop_qwen_server()
 
 
 def print_model_client_error(error: ModelClientError) -> None:
@@ -110,27 +97,29 @@ def main() -> int:
         "server cleanup": False,
     }
 
-    endpoint_url = QWEN_MODEL.endpoint_url
     endpoint_port = QWEN_MODEL.endpoint_port
+    endpoint_url = (
+        f"http://127.0.0.1:{QWEN_SERVER_PROFILE.host_port}/v1"
+    )
 
     if endpoint_url is None or endpoint_port is None:
         print("Result: FAIL")
         print("Qwen endpoint URL or port is not configured.")
         return 2
 
-    if endpoint_port != HOST_PORT:
+    if endpoint_port != QWEN_SERVER_PROFILE.host_port:
         print("Result: FAIL")
         print(
             "Configured Qwen port does not match the launcher port: "
-            f"{endpoint_port} != {HOST_PORT}."
+            f"{endpoint_port} != {QWEN_SERVER_PROFILE.host_port}."
         )
         return 2
 
-    if QWEN_MODEL.model_name != SERVED_MODEL_NAME:
+    if QWEN_MODEL.model_name != QWEN_SERVER_PROFILE.served_model_name:
         print("Result: FAIL")
         print(
             "Configured Qwen model does not match the served model: "
-            f"{QWEN_MODEL.model_name} != {SERVED_MODEL_NAME}."
+            f"{QWEN_MODEL.model_name} != {QWEN_SERVER_PROFILE.served_model_name}."
         )
         return 2
 
@@ -147,7 +136,7 @@ def main() -> int:
     if initial_container_state == "running":
         print("Result: FAIL")
         print(
-            f"Container {CONTAINER_NAME} is already running. "
+            f"Container {QWEN_SERVER_PROFILE.container_name} is already running. "
             "The smoke test will not take ownership of it."
         )
         return 2

@@ -1,0 +1,85 @@
+version: v0
+
+execution_status:
+  - pending
+  - active
+  - completed
+  - failed
+  - cancelled
+
+priority:
+  - low
+  - medium
+  - high
+  - critical
+
+result_status:
+  - complete
+  - partial
+
+error_category:
+  - rejection
+  - validation
+  - execution
+  - timeout
+  - cancelled
+
+error_source:
+  - task_executive
+  - agent
+  - model
+  - tool
+
+requirement_resolution_status:
+  - available
+  - unavailable
+  - deferred
+
+worker_kind:
+  - model
+  - agent
+  - tool
+
+plan_step_execution_status:
+  - authorized
+  - ready
+  - running
+  - completed
+  - failed
+  - skipped
+  - blocked
+
+failure_policy:
+  - stop
+  - retry
+  - skip
+  - request_replan
+  - escalate
+
+validation_outcome:
+  - not_started
+  - passed
+  - failed
+  - partial
+  - inconclusive
+
+artifact_validation_status:
+  - pending
+  - valid
+  - invalid
+
+semantics:
+  attempt:
+    description: Transport or execution attempt; never a semantic iteration.
+  semantic_iteration:
+    description: Director-recognized meaningful advancement authoritatively stored in job or Vault state and bounded by Task Executive policy.
+  okf_iteration_snapshot:
+    description: Recorded semantic iteration when an OKF draft was accepted; never an authoritative counter.
+  resolved:
+    description: Logical worker identity selected from configured participant-role mappings; not concrete deployment details.
+  trace_deployment:
+    description: Concrete agent, session, model, compute node, and host that performed execution.
+  task_persistence:
+    description: Persistence mechanics for one task execution record.
+  plan_execution_persistence:
+    description: Persistence mechanics for associated plan-execution state.

@@ -1,4 +1,4 @@
-version: 1
+version: v0
  # TODO: Re-evaluate <deliberation> container after planning protocol stabilizes.
 planning_level:
   - instant
@@ -41,27 +41,6 @@ severity:
 
 step_status:
   - proposed
-  - authorized
-  - ready
-  - running
-  - completed
-  - failed
-  - skipped
-  - blocked
-
-failure_policy:
-  - stop
-  - retry
-  - skip
-  - request_replan
-  - escalate
-
-validation_outcome:
-  - not_started
-  - passed
-  - failed
-  - partial
-  - inconclusive
 
 validation_status:
   - pending
@@ -73,3 +52,7 @@ reference_target_kind:
   - proposal
   - step
   - revision
+
+semantics:
+  semantic_iteration:
+    description: Authoritative Director-recognized meaningful advancement persisted in job or Vault state.

@@ -1,0 +1,87 @@
+version: v0
+
+capability:
+  knowledge_extraction:
+    accepted_input_kinds:
+      - source
+      - prepared_markdown
+      - source_fragment
+      - prior_knowledge
+    expected_output_kinds:
+      - okf_draft
+      - knowledge_atoms
+    recommended_operations:
+      - extract
+      - question
+      - verify_support
+      - critique
+    restrictions:
+      - preserve_source_support
+      - distinguish_uncertainty
+  knowledge_synthesis:
+    accepted_input_kinds:
+      - knowledge
+      - okf_draft
+      - accepted_plan
+      - prior_synthesis
+    expected_output_kinds:
+      - plan
+      - critique
+      - comparison
+      - synthesis
+      - decision
+    recommended_operations:
+      - plan
+      - compare
+      - question
+      - critique
+      - revise
+      - resolve_disagreement
+      - synthesize
+      - assess_convergence
+    restrictions:
+      - distinguish_evidence_from_inference
+      - preserve_unresolved_questions
+
+participant_role:
+  - primary_worker
+  - reviewer
+  - challenger
+  - tool
+
+work_kind:
+  - planning
+  - execution
+  - review
+  - synthesis
+
+semantic_operation:
+  - extract
+  - extract_more
+  - plan
+  - compare
+  - ask_question
+  - critique
+  - revise
+  - resolve_disagreement
+  - synthesize
+  - assess_convergence
+  - verify_support
+
+requirement_kind:
+  - external_knowledge
+  - web_access
+  - document_retrieval
+  - source_verification
+  - additional_extracted_knowledge
+
+granularity:
+  - coarse
+  - medium
+  - fine
+
+semantics:
+  methods:
+    description: Capability recommendations used at runtime; not normal per-task fields.
+  acceptance:
+    description: Optional because exploratory semantic work may not have a predeclared success criterion.

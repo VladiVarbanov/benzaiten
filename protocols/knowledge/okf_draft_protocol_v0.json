@@ -1,7 +1,7 @@
 {
 "protocol": {
 "name": "okf-draft",
-"version": "0.0",
+"version": "v0",
 "purpose": "Structured output of one knowledge-extraction or synthesis pass before creation of an authoritative OKF artifact."
 },
 
@@ -28,7 +28,7 @@
 "extraction": {
 "iteration": {
 "current": 1,
-"max": 2
+"maximum": 2
 },
 "angles": [
 "<analytical-angle>"
@@ -139,28 +139,5 @@
 "rejected_content_refs": [],
 "deferred_content_refs": [],
 "decision_reason": null
-},
-
-"provenance": {
-"created_by_agent_ref": "<agent-id>",
-"model_ref": "<model-id>",
-"prompt_artifact_ref": null,
-"created_at": "<iso-8601-utc>",
-"updated_at": "<iso-8601-utc>"
-},
-
-"persistence": {
-"save_draft": true,
-"save_location": "<draft-storage-path-or-uri>"
-},
-
-"validation": {
-"schema_status": "pending",
-"reference_status": "pending",
-"vocabulary_status": "pending",
-"lineage_status": "pending",
-"validated_by_ref": null,
-"validated_at": null,
-"errors": []
 }
 }

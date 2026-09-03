@@ -1,0 +1,123 @@
+{
+  "protocol": {
+    "name": "task-execution",
+    "version": "v0",
+    "purpose": "Execution state for a Director-issued task and its associated plan execution."
+  },
+  "execution": {
+    "execution_id": "<globally-unique-execution-id>",
+    "task_ref": "<director-task-ref>",
+    "job_ref": "<semantic-job-or-mandate-ref>",
+    "control": {
+      "status": "pending",
+      "priority": "medium",
+      "attempt": {
+        "current": 1,
+        "maximum": 1
+      }
+    },
+    "resolved": {
+      "participant_role": "<requested-semantic-role>",
+      "logical_context": "<resolved-logical-context-id>",
+      "worker_kind": "<model | agent | tool>",
+      "worker_ref": "<resolved-logical-worker-ref>",
+      "requirements": []
+    },
+    "output_contract_ref": "<resolved-capability-output-contract-ref>",
+    "result": {
+      "status": "<complete | partial>",
+      "content": "<payload-conforming-to-output-contract>",
+      "artifact_refs": [],
+      "notes": "<executor-or-worker-remarks>"
+    },
+    "error": {
+      "code": "<stable-machine-code>",
+      "category": "<rejection | validation | execution | timeout | cancelled>",
+      "detail": "<human-readable-explanation>",
+      "retryable": false,
+      "source": "<task_executive | agent | model | tool>"
+    },
+    "provenance": {
+      "prompt_artifact_ref": null,
+      "created_at": "<iso-8601-utc>",
+      "updated_at": "<iso-8601-utc>"
+    },
+    "persistence": {
+      "save": true,
+      "location": "<runtime-resolved-path-or-uri>"
+    },
+    "trace": {
+      "resolved_by": "task_executive",
+      "resolved_at": "<iso-8601-utc>",
+      "deployment": {
+        "agent": "<resolved-agent-id>",
+        "session": "<worker-session-instance-id>",
+        "model": "<resolved-model-identity>",
+        "compute_node": "<resolved-compute-node-id>",
+        "host": "<resolved-host-id>"
+      },
+      "events": []
+    },
+    "plan_execution": {
+      "plan_ref": "<plan-revision-ref>",
+      "execution_authorizer": "<deterministic orchestrator id>",
+      "steps": [
+        {
+          "step_ref": "<plan-step-ref>",
+          "on_failure": {
+            "policy": "<stop | retry | skip | request_replan | escalate>",
+            "max_retries": 0,
+            "fallback_step_ref": null,
+            "record_failure": true
+          }
+        }
+      ],
+      "authorization": {
+        "authorized": false,
+        "authorizer_ref": "<deterministic orchestrator id>",
+        "authorization_record_ref": null,
+        "authorized_at": null
+      },
+      "current_step_ref": null,
+      "next_step_ref": null,
+      "expected_result_ref": null,
+      "expected_result_snapshot": null,
+      "achieved_result": null,
+      "deviation": null,
+      "validation_outcome": "not_started",
+      "validation_evidence_refs": [],
+      "replan_requested": false,
+      "replan_reason": null,
+      "outcomes": [],
+      "persistence": {
+        "save": true,
+        "location": "<authoritative location, such as plans/{plan_id}/rev-{revision}.json>",
+        "created_at": "<ISO-8601 timestamp, set by orchestrator>",
+        "updated_at": "<ISO-8601 timestamp, set by orchestrator>"
+      }
+    },
+    "artifact_record": {
+      "artifact_ref": "<knowledge-artifact-or-draft-ref>",
+      "provenance": {
+        "created_by_agent_ref": "<agent-id>",
+        "model_ref": "<model-id>",
+        "prompt_artifact_ref": null,
+        "created_at": "<iso-8601-utc>",
+        "updated_at": "<iso-8601-utc>"
+      },
+      "persistence": {
+        "save_draft": true,
+        "save_location": "<draft-storage-path-or-uri>"
+      },
+      "validation": {
+        "schema_status": "pending",
+        "reference_status": "pending",
+        "vocabulary_status": "pending",
+        "lineage_status": "pending",
+        "validated_by_ref": null,
+        "validated_at": null,
+        "errors": []
+      }
+    }
+  }
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 from structures import (
     AgentStruct,
     HostStruct,
+    LogicalContextStruct,
     ModelStruct,
     make_compute_node,
     make_memory,
@@ -16,11 +17,10 @@ from structures import (
 
 
 # =====================================================================
-# 1. LOCAL ORCHESTRATOR IDENTITY
+# 1. LOCAL DEPLOYMENT IDENTITY
 # =====================================================================
 
 NODE_ID = "pc1"
-NODE_ROLE = "orchestrator"
 ORCHESTRATOR_ROOT = Path("/home/vladi/local_ai/benzaiten")
 PROJECT_ROOT = ORCHESTRATOR_ROOT  # Backward-compatible alias for now.
 
@@ -128,11 +128,12 @@ OKF_CONCEPTS_DIR = VAULT_DIR / "concepts"
 # ---------------------------------------------------------------------
 
 OKF_DRAFT_PROTOCOL_PATH = (
-    TEMPLATES_DIR / "okf_draft_protocol_v0.json"
+    ORCHESTRATOR_ROOT / "protocols/knowledge/okf_draft_protocol_v0.json"
 )
 
 OKF_DRAFT_PROTOCOL_VOCABULARY_PATH = (
-    TEMPLATES_DIR / "okf_draft_protocol_vocabulary.yaml"
+    ORCHESTRATOR_ROOT
+    / "protocols/knowledge/okf_draft_protocol_vocabulary.yaml"
 )
 
 OKF_TEMPLATE_PATH = (
@@ -145,17 +146,43 @@ OKF_VOCABULARY_PATH = (
 
 
 # ---------------------------------------------------------------------
-# Orchestrator communication resources
+# Managed communication, Director-task, and execution resources
 # ---------------------------------------------------------------------
 
+COMMUNICATION_PROTOCOL_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/communication"
+    / "communication_protocol_v0.json"
+)
+COMMUNICATION_VOCABULARY_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/communication"
+    / "communication_vocabulary.yaml"
+)
+DIRECTOR_TASK_PROTOCOL_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/director"
+    / "director_task_protocol_v0.json"
+)
+DIRECTOR_TASK_VOCABULARY_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/director"
+    / "director_task_vocabulary.yaml"
+)
+TASK_EXECUTION_PROTOCOL_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/execution"
+    / "task_execution_protocol_v0.json"
+)
+TASK_EXECUTION_VOCABULARY_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/execution"
+    / "task_execution_vocabulary.yaml"
+)
+
+# Compatibility resources for the deliberately unchanged legacy validator.
 ORCHESTRATOR_COMMUNICATION_PROTOCOL_PATH = (
-    TEMPLATES_DIR
-    / "orchestrator_communication_protocol_v0.json"
+    ORCHESTRATOR_ROOT / "protocols/communication"
+    / "legacy_orchestrator_communication_protocol_v0.json"
 )
 
 ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH = (
-    TEMPLATES_DIR
-    / "orchestrator_communication_protocol_vocabulary.yaml"
+    ORCHESTRATOR_ROOT / "protocols/communication"
+    / "legacy_orchestrator_communication_vocabulary.yaml"
 )
 
 
@@ -164,11 +191,11 @@ ORCHESTRATOR_COMMUNICATION_PROTOCOL_VOCABULARY_PATH = (
 # ---------------------------------------------------------------------
 
 PLAN_PROTOCOL_PATH = (
-    TEMPLATES_DIR / "plan_protocol_v0.json"
+    ORCHESTRATOR_ROOT / "protocols/planning/plan_protocol_v0.json"
 )
 
 PLAN_PROTOCOL_VOCABULARY_PATH = (
-    TEMPLATES_DIR / "plan_protocol_vocabulary.yaml"
+    ORCHESTRATOR_ROOT / "protocols/planning/plan_protocol_vocabulary.yaml"
 )
 
 PLAN_PROTOCOL_NOTES_PATH = (
@@ -320,9 +347,9 @@ PC2_GPU0 = make_compute_node(
 
 QWEN_MODEL = ModelStruct(
     model_name="qwen3-30b-a3b-nvfp4",
-    node=PC1_GPU0.node,
+    node=PC2_GPU0.node,
     interface_type="openai_compatible_api",
-    endpoint_url="http://127.0.0.1:8001/v1",
+    endpoint_url="http://192.168.50.2:8001/v1",
     endpoint_port=8001,
     api_key_env="BENZAITEN_QWEN_API_KEY",
     cli_command=None,
@@ -334,19 +361,14 @@ QWEN_MODEL = ModelStruct(
 )
 
 DIFFUSION_GEMMA_MODEL = ModelStruct(
-    model_name="diffusiongemma-26b-a4b-it-gguf",
-    node=PC2_GPU0.node,
-    interface_type="cli",
-    endpoint_url=None,
-    endpoint_port=None,
+    model_name="diffusiongemma-26b-a4b-it-nvfp4",
+    node=PC1_GPU0.node,
+    interface_type="openai_compatible_api",
+    endpoint_url="http://127.0.0.1:8003/v1",
+    endpoint_port=8003,
     api_key_env=None,
-    cli_command=(
-        "CUDA_VISIBLE_DEVICES=0 "
-        "/home/vladi/local_ai/llama.cpp-diffusiongemma/build/bin/llama-cli "
-        "-m /home/vladi/local_ai/models/diffusiongemma-26B-A4B-it-Q4_K_M.gguf "
-        "--prompt-file {prompt_path}"
-    ),
-    working_dir=Path("/home/vladi/local_ai"),
+    cli_command=None,
+    working_dir=None,
     role=["reasoning", "reviewer"],
     context_tokens=4096,
     output_tokens=3000,
@@ -382,7 +404,7 @@ QWEN_AGENT = AgentStruct(
 
 GEMMA_REVIEWER_AGENT = AgentStruct(
     name="gemma_reviewer_agent",
-    node=PC2_CPU.node,
+    node=PC1_CPU.node,
     interface_type="python_subprocess",
     role=["reviewer", "reasoning_worker"],
     uses_model="diffusion_gemma",
@@ -414,10 +436,51 @@ MODELS = {
     "diffusion_gemma": DIFFUSION_GEMMA_MODEL,
 }
 
+# Explicit model selection for the first manually run pc1 -> pc2 trial.
+# Change this registry key if model placement changes.
+PC2_INFERENCE_TRIAL_MODEL = "qwen"
+
 AGENTS = {
     "benzaiten_orchestrator": BENZAITEN_ORCHESTRATOR,
     "qwen_agent": QWEN_AGENT,
     "gemma_reviewer_agent": GEMMA_REVIEWER_AGENT,
+}
+
+# Deployment and logical context are independent configuration concepts.
+# Existing concrete model and server settings remain unchanged.
+TASK_EXECUTIVE_AGENT = "benzaiten_orchestrator"
+
+LOGICAL_CONTEXTS = {
+    "gemma_director": LogicalContextStruct(
+        name="gemma_director",
+        participant_role="director",
+        worker_kind="model",
+        worker_ref="diffusion_gemma",
+    ),
+    "gemma_worker": LogicalContextStruct(
+        name="gemma_worker",
+        participant_role="primary_worker",
+        worker_kind="model",
+        worker_ref="diffusion_gemma",
+    ),
+    "qwen_worker": LogicalContextStruct(
+        name="qwen_worker",
+        participant_role="reviewer",
+        worker_kind="model",
+        worker_ref="qwen",
+    ),
+}
+
+DIRECTOR_CONTEXT = "gemma_director"
+PARTICIPANT_ROLE_CONTEXTS = {
+    "primary_worker": "gemma_worker",
+    "reviewer": "qwen_worker",
+    "challenger": "qwen_worker",
+}
+
+DEFAULT_JOB_BUDGET = {
+    "semantic_iterations": 3,
+    "reasoning_tasks": 20,
 }
 
 
@@ -462,18 +525,63 @@ ACTIONS = {
         "input_kinds": ["verified_okf"],
         "output_kind": "written_okf",
     },
+    "ask_question": {
+        "enabled": False,
+        "capability": "knowledge_synthesis",
+        "input_kinds": ["summary", "okf_draft", "verified_okf"],
+        "output_kind": "question",
+    },
+    "critique": {
+        "enabled": False,
+        "capability": "knowledge_synthesis",
+        "input_kinds": ["summary", "okf_draft", "verified_okf"],
+        "output_kind": "critique",
+    },
+    "revise": {
+        "enabled": False,
+        "capability": "knowledge_synthesis",
+        "input_kinds": ["okf_draft"],
+        "output_kind": "okf_draft",
+    },
+    "synthesize": {
+        "enabled": False,
+        "capability": "knowledge_synthesis",
+        "input_kinds": ["summary", "okf_draft", "verified_okf"],
+        "output_kind": "synthesis",
+    },
+    "gather_external_evidence": {
+        "enabled": False,
+        "capability": "knowledge_synthesis",
+        "input_kinds": ["summary", "okf_draft", "verified_okf"],
+        "output_kind": "external_evidence",
+    },
 }
 
-STATE_MACHINE = {
-    "start_kind": "source_file",
-    "done_kind": "written_okf",
-    "transitions": {
-        "source_file": "ingest_file",
-        "ingested_file": "convert_to_md",
-        "markdown": "summarize",
-        "summary": "extract_okf",
-        "okf_draft": "verify_okf",
-        "verified_okf": "write_okf",
-        "written_okf": "done",
-    },
+LEGAL_ACTIONS_BY_STATE = {
+    "source_file": ("ingest_file",),
+    "ingested_file": ("convert_to_md",),
+    "markdown": ("summarize", "extract_okf"),
+    "summary": (
+        "extract_okf",
+        "ask_question",
+        "critique",
+        "synthesize",
+        "gather_external_evidence",
+    ),
+    "okf_draft": (
+        "extract_okf",
+        "verify_okf",
+        "ask_question",
+        "critique",
+        "revise",
+        "synthesize",
+        "gather_external_evidence",
+    ),
+    "verified_okf": (
+        "write_okf",
+        "critique",
+        "synthesize",
+        "gather_external_evidence",
+    ),
+    "written_okf": (),
 }
