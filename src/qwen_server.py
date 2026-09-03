@@ -20,12 +20,8 @@ QWEN_SERVER_PROFILE = ModelServerProfile(
 
     container_name="benzaiten-qwen",
 
-    # Exact local image that successfully loaded Qwen.
-    image=(
-        "sha256:"
-        "953d3a06d5e64ab582985cd7401289d3"
-        "abf2a2c14ef2158e9a84313daeec77d7"
-    ),
+    # Versioned deployment identifier shared across physical hosts.
+    image="vllm/vllm-openai:v0.23.0",
 
     models_root=MODELS_ROOT,
     model_directory=(
