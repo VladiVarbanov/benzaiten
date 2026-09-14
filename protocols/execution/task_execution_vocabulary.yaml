@@ -79,6 +79,10 @@ semantics:
     description: Logical worker identity selected from configured participant-role mappings; not concrete deployment details.
   trace_deployment:
     description: Concrete agent, session, model, compute node, and host that performed execution.
+  terminal_profiles:
+    description: Successful terminal executions use status completed, populate result, and clear error; failed terminal executions use status failed, populate error, and clear result.
+  artifact_record:
+    description: Optional and conditional; present only when execution creates or updates a persistable knowledge artifact or draft, otherwise absent or null.
   task_persistence:
     description: Persistence mechanics for one task execution record.
   plan_execution_persistence:

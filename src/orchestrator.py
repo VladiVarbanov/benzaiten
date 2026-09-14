@@ -7,7 +7,9 @@ the next semantic action.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +38,7 @@ from config import (
 )
 
 from director import DirectorTask
+from model_client import ModelClient, ModelClientConfig, ModelResponse
 from structures import AgentStruct, LogicalContextStruct, ModelStruct, WorkerKind
 
 if TYPE_CHECKING:
@@ -161,13 +164,66 @@ def resolve_participant_role(participant_role: str) -> WorkerAssignment:
     raise RuntimeError(f"Unsupported worker kind: {context.worker_kind}")
 
 
+def resolve_model_context(context_name: str) -> WorkerAssignment:
+    """Resolve an already-selected logical context to a configured model."""
+
+    try:
+        context = LOGICAL_CONTEXTS[context_name]
+    except KeyError as exc:
+        raise ValueError(f"Unknown logical context: {context_name}") from exc
+    if context.worker_kind != "model":
+        raise ValueError(f"Logical context is not model-backed: {context_name}")
+    try:
+        model = MODELS[context.worker_ref]
+    except KeyError as exc:
+        raise ValueError(
+            f"Configured model is unavailable: {context.worker_ref}"
+        ) from exc
+    return WorkerAssignment(
+        participant_role=context.participant_role,
+        logical_context=context,
+        worker_kind="model",
+        model=model,
+    )
+
+
+def invoke_model_context(
+    context_name: str,
+    messages: tuple[dict[str, str], ...],
+    *,
+    response_format: Mapping[str, object] | None = None,
+    chat_template_kwargs: Mapping[str, object] | None = None,
+) -> ModelResponse:
+    """Invoke a Director-selected model context through generic transport."""
+
+    assignment = resolve_model_context(context_name)
+    assert assignment.model is not None
+    model = assignment.model
+    if model.endpoint_url is None:
+        raise ValueError(f"Model context has no HTTP endpoint: {context_name}")
+    api_key = os.environ.get(model.api_key_env) if model.api_key_env else None
+    client_config = ModelClientConfig(
+        base_url=model.endpoint_url,
+        model_name=model.model_name,
+        max_completion_tokens=model.output_tokens,
+        temperature=model.temperature,
+        api_key=api_key,
+    )
+    with ModelClient(client_config) as client:
+        return client.call_model(
+            messages,
+            response_format=response_format,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+
+
 def prepare_director_task(
     task: DirectorTask,
     *,
     current_kind: str,
     action: str,
 ) -> dict[str, object]:
-    """Validate and resolve a Director request without executing it yet."""
+    """Prepare a legacy action-state task; retained for the PDF pipeline."""
 
     validate_selected_action(current_kind, action)
     resolved = resolve_participant_role(task.participant_role)
@@ -194,3 +250,16 @@ def run_pdf_preparation_stage(
         source_pdf=source_pdf,
         log_console=log_console,
     )
+
+
+def prepare_managed_director_task(task: DirectorTask) -> dict[str, object]:
+    """Prepare validated managed work using the task's semantic action only."""
+
+    if task.work_kind != "execution" or task.action is None:
+        raise ValueError("Managed execution requires DirectorTask work_kind/action.")
+    resolved = resolve_participant_role(task.participant_role)
+    return {
+        "task": task,
+        "action": task.action,
+        "resolved_participant": resolved,
+    }

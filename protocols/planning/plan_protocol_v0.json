@@ -78,9 +78,9 @@
         "id": "<critique id>",
         "iteration": 1,
         "author_ref": "<agent id>",
-        "target_kind": "<proposal | step | revision | revision >",
+        "target_kind": "<plan | proposal | step | revision>",
         "target_ref": "<qualified target reference>",
-        "severity": "<blocking | major | minor | low>",
+        "severity": "<blocking | high | medium | low>",
         "summary": "<concise critique>",
         "suggested_change_refs": [
           "<change id>"
@@ -94,7 +94,7 @@
       {
         "id": "<change id>",
         "author_ref": "<agent id>",
-        "target_kind": "<proposal | step | revision | revision>",
+        "target_kind": "<plan | proposal | step | revision>",
         "target_ref": "<qualified target reference>",
         "description": "<concise suggested modification>",
         "reason": "<concise reason for the change>",
@@ -217,7 +217,7 @@
     },
 
     "validation": {
-      "status": "not_checked",
+      "status": "pending",
       "validated_by_ref": null,
       "validated_at": null,
       "errors": []

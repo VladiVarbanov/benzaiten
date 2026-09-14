@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
@@ -127,6 +128,9 @@ class ModelClient:
     def _build_request_payload(
             self,
             messages: Sequence[Mapping[str, object]],
+            *,
+            response_format: Mapping[str, object] | None = None,
+            chat_template_kwargs: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         if (
             not isinstance(messages, Sequence)
@@ -204,6 +208,33 @@ class ModelClient:
 
         if self.config.top_p is not None:
             payload["top_p"] = self.config.top_p
+
+        if response_format is not None:
+            if not isinstance(response_format, Mapping):
+                raise _ModelRequestValidationError(
+                    "response_format must be a mapping."
+                )
+            if not all(isinstance(key, str) for key in response_format):
+                raise _ModelRequestValidationError(
+                    "response_format field names must be strings."
+                )
+            payload["response_format"] = deepcopy(dict(response_format))
+
+        if chat_template_kwargs is not None:
+            if not isinstance(chat_template_kwargs, Mapping):
+                raise _ModelRequestValidationError(
+                    "chat_template_kwargs must be a mapping."
+                )
+            if not all(
+                isinstance(key, str)
+                for key in chat_template_kwargs
+            ):
+                raise _ModelRequestValidationError(
+                    "chat_template_kwargs field names must be strings."
+                )
+            payload["chat_template_kwargs"] = deepcopy(
+                dict(chat_template_kwargs)
+            )
 
         return payload
 
@@ -535,6 +566,9 @@ class ModelClient:
     def call_model(
             self,
             messages: Sequence[Mapping[str, object]],
+            *,
+            response_format: Mapping[str, object] | None = None,
+            chat_template_kwargs: Mapping[str, object] | None = None,
     ) -> ModelResponse:
         request_id = uuid4().hex
 
@@ -542,7 +576,11 @@ class ModelClient:
         started_at = time.perf_counter()
 
         try:
-            payload = self._build_request_payload(messages)
+            payload = self._build_request_payload(
+                messages,
+                response_format=response_format,
+                chat_template_kwargs=chat_template_kwargs,
+            )
             successful_response = self._send_http_request(
                 payload=payload,
             )

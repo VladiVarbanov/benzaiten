@@ -104,7 +104,11 @@ class ModelStruct:
     # Model limits
     context_tokens: int
     output_tokens: int
-    temperature: float
+    temperature: Optional[float]
+
+    # OpenAI-compatible constrained-decoding capability.
+    supports_json_schema: bool = False
+    structured_output_chat_template_kwargs: Optional[dict[str, object]] = None
 
 
 @dataclass(frozen=True)

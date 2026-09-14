@@ -46,6 +46,9 @@ QWEN_SERVER_PROFILE = ModelServerProfile(
         "--cpu-offload-gb",
         "8",
 
+        "--reasoning-parser",
+        "qwen3",
+
         "--enable-auto-tool-choice",
 
         "--tool-call-parser",

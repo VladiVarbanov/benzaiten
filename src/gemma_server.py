@@ -65,6 +65,11 @@ GEMMA_SERVER_PROFILE = ModelServerProfile(
 
         "--reasoning-parser",
         "gemma4",
+
+        "--enable-auto-tool-choice",
+
+        "--tool-call-parser",
+        "gemma4",
     ),
 
     ready_timeout_seconds=300.0,

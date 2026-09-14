@@ -184,3 +184,34 @@ task_executive_governance:
 
 communication_governance:
   - route_communication
+
+conformance_repair:
+  maximum_attempts_per_artifact: 1
+  consumes_reasoning_task: true
+  advances_semantic_iteration: false
+  semantic_change_allowed: false
+
+  allowed_for:
+    - structural_conformance
+    - invalid_reference
+    - protocol_integrity
+
+semantic_completion:
+  maximum_attempts_per_artifact: 1
+  consumes_reasoning_task: true
+  advances_semantic_iteration: false
+  same_semantic_producer: true
+  semantic_change_scope: missing_decisions_only
+
+semantic_architecture_acceptance:
+  requires_structural_certification: true
+  assessor_has_decision_authority: false
+  advances_semantic_iteration: false
+  acceptance_requires_compliant: true
+
+semantic_boundary_correction:
+  maximum_attempts_per_plan: 1
+  consumes_reasoning_task: true
+  advances_semantic_iteration: false
+  same_director: true
+  semantic_change_scope: identified_architecture_violations_only

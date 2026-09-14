@@ -202,6 +202,10 @@ PLAN_PROTOCOL_NOTES_PATH = (
     TEMPLATES_DIR / "plan_protocol_notes.md"
 )
 
+PLANNING_POLICY_PATH = (
+    ORCHESTRATOR_ROOT / "protocols/planning/planning_policy.yaml"
+)
+
 
 # =====================================================================
 # 4. DIRECTORY SANDBOXING
@@ -270,7 +274,7 @@ PC1_CPU_MEMORY = make_memory(
 )
 
 PC1_GPU0_MEMORY = make_memory(
-    total_gb=16.0,
+    total_gb=32.0,
     reserved_system_gb=0.7,
     memory_type="vram",
 )
@@ -286,13 +290,6 @@ PC2_GPU0_MEMORY = make_memory(
     reserved_system_gb=0.7,
     memory_type="vram",
 )
-
-# Ordered but not necessarily installed yet. Keep commented until physically present.
-# PC1_GPU1_MEMORY = make_memory(
-#     total_gb=32.0,
-#     reserved_system_gb=0.7,
-#     memory_type="vram",
-# )
 
 
 # =====================================================================
@@ -311,7 +308,7 @@ PC1_GPU0 = make_compute_node(
     phys_host="pc1",
     device_type="gpu",
     device_id=0,
-    device_name="RTX_5070_Ti_16GB",
+    device_name="NVIDIA_RTX_PRO_4500_Blackwell_32GB",
     memory=PC1_GPU0_MEMORY,
 )
 
@@ -331,15 +328,6 @@ PC2_GPU0 = make_compute_node(
     memory=PC2_GPU0_MEMORY,
 )
 
-# Future RTX PRO 4500 32GB placement example, after installation:
-# PC1_GPU1 = make_compute_node(
-#     phys_host="pc1",
-#     device_type="gpu",
-#     device_id=1,
-#     device_name="RTX_PRO_4500_32GB",
-#     memory=PC1_GPU1_MEMORY,
-# )
-
 
 # =====================================================================
 # 8. MODEL INSTANCES
@@ -354,10 +342,12 @@ QWEN_MODEL = ModelStruct(
     api_key_env="BENZAITEN_QWEN_API_KEY",
     cli_command=None,
     working_dir=None,
-    role=["agent", "coder", "summarizer"],
+    role=["reasoning", "worker", "reviewer", "assessor", "coder", "summarizer"],
     context_tokens=8192,
     output_tokens=800,
     temperature=0.1,
+    supports_json_schema=True,
+    structured_output_chat_template_kwargs={"enable_thinking": False},
 )
 
 DIFFUSION_GEMMA_MODEL = ModelStruct(
@@ -372,7 +362,7 @@ DIFFUSION_GEMMA_MODEL = ModelStruct(
     role=["reasoning", "reviewer"],
     context_tokens=4096,
     output_tokens=3000,
-    temperature=0.2,
+    temperature=None,
 )
 
 
@@ -428,7 +418,6 @@ COMPUTE_NODES = {
     PC1_GPU0.node: PC1_GPU0,
     PC2_CPU.node: PC2_CPU,
     PC2_GPU0.node: PC2_GPU0,
-    # PC1_GPU1.node: PC1_GPU1,  # enable after RTX PRO 4500 is installed
 }
 
 MODELS = {
@@ -481,6 +470,15 @@ PARTICIPANT_ROLE_CONTEXTS = {
 DEFAULT_JOB_BUDGET = {
     "semantic_iterations": 3,
     "reasoning_tasks": 20,
+}
+
+NORMAL_PLANNING_CONTEXTS = {
+    "gemma_proposal": "gemma_worker",
+    "qwen_proposal": "qwen_worker",
+    "qwen_assessment": "qwen_worker",
+    "gemma_assessment": "gemma_worker",
+    "director_synthesis": DIRECTOR_CONTEXT,
+    "architecture_assessment": "gemma_worker",
 }
 
 

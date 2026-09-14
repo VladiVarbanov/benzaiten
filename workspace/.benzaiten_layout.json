@@ -6,7 +6,6 @@
     "protocols": "protocols",
     "communication_protocols": "protocols/communication",
     "planning_protocols": "protocols/planning",
-    "planning_protocols_old": "protocols/planning/old",
     "knowledge_protocols": "protocols/knowledge",
     "templates": "templates",
     "workspace": "workspace",
