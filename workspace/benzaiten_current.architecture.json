@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Benzaiten Managed Work — CURRENT after Iteration 2",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1240,
+      900
+    ],
+    "views": [
+      {
+        "id": "normal_planning",
+        "label": "Normal planning",
+        "focus": [
+          "request_snapshot",
+          "gemma_branch",
+          "qwen_branch",
+          "reciprocal_assessment",
+          "director",
+          "candidate_plan",
+          "structural_gate",
+          "architecture_gate",
+          "final_plan"
+        ],
+        "note": "Independent proposals and reciprocal assessments feed focused Director semantics, Python assembly, and dual Plan acceptance."
+      },
+      {
+        "id": "dual_acceptance",
+        "label": "Dual Plan acceptance",
+        "focus": [
+          "director",
+          "candidate_plan",
+          "structural_gate",
+          "architecture_gate",
+          "final_plan"
+        ],
+        "note": "A candidate becomes final only after deterministic protocol certification and configured semantic architecture acceptance."
+      },
+      {
+        "id": "authority_split",
+        "label": "Authority split",
+        "focus": [
+          "director",
+          "candidate_plan",
+          "architecture_gate",
+          "final_plan",
+          "future_execution_seam"
+        ],
+        "note": "Director owns meaning, Python owns protocol structure, Plan stays passive, and Task Executive remains outside Iteration 2."
+      },
+      {
+        "id": "configured_routing",
+        "label": "Configured model calls",
+        "focus": [
+          "configured_transport",
+          "gemma_branch",
+          "qwen_branch",
+          "director",
+          "architecture_gate"
+        ],
+        "note": "Capability metadata selects structured-output behavior; logical-context configuration selects every semantic caller."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "request_snapshot",
+      "type": "external",
+      "label": "Frozen request snapshot",
+      "sublabel": "same input · isolated projections",
+      "tag": "immutable request",
+      "pos": [
+        20,
+        210
+      ],
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "gemma_branch",
+      "type": "cloud",
+      "label": "Gemma branch",
+      "sublabel": "proposal A · assesses B",
+      "tag": "gemma_worker",
+      "pos": [
+        260,
+        70
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "qwen_branch",
+      "type": "cloud",
+      "label": "Qwen branch",
+      "sublabel": "proposal B · assesses A",
+      "tag": "qwen_worker",
+      "pos": [
+        260,
+        350
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "reciprocal_assessment",
+      "type": "messagebus",
+      "label": "Reciprocal constructive assessment",
+      "sublabel": "peer-only · empty findings valid",
+      "tag": "critiques + changes",
+      "pos": [
+        510,
+        210
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "director",
+      "type": "backend",
+      "label": "Gemma Director synthesis",
+      "sublabel": "dispositions · synthesis · steps",
+      "tag": "semantic authority",
+      "pos": [
+        760,
+        210
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "candidate_plan",
+      "type": "database",
+      "label": "Candidate Plan",
+      "sublabel": "semantics + Python assembly",
+      "tag": "trusted bookkeeping",
+      "pos": [
+        1005,
+        210
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "structural_gate",
+      "type": "security",
+      "label": "Structural / protocol gate",
+      "sublabel": "deterministic protocol validation",
+      "tag": "Python authority",
+      "pos": [
+        1005,
+        375
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "architecture_gate",
+      "type": "security",
+      "label": "Semantic architecture gate",
+      "sublabel": "configured assessor · frozen rules",
+      "tag": "advisory · correction max 1",
+      "pos": [
+        1005,
+        540
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "final_plan",
+      "type": "database",
+      "label": "Final certified passive Plan",
+      "sublabel": "protocol valid · semantics accepted",
+      "tag": "iteration 3",
+      "pos": [
+        1005,
+        705
+      ],
+      "size": [
+        220,
+        92
+      ]
+    },
+    {
+      "id": "configured_transport",
+      "type": "backend",
+      "label": "Configured ModelClient transport",
+      "sublabel": "context → model → HTTP",
+      "tag": "capability-driven output",
+      "pos": [
+        260,
+        630
+      ],
+      "size": [
+        250,
+        92
+      ]
+    },
+    {
+      "id": "future_execution_seam",
+      "type": "security",
+      "label": "DirectorTask → Task Executive",
+      "sublabel": "mechanical resolution + execution",
+      "tag": "Iteration 3 not entered",
+      "pos": [
+        720,
+        705
+      ],
+      "size": [
+        250,
+        92
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "request_to_gemma",
+      "from": "request_snapshot",
+      "to": "gemma_branch",
+      "label": "isolated proposal projection",
+      "variant": "emphasis"
+    },
+    {
+      "id": "request_to_qwen",
+      "from": "request_snapshot",
+      "to": "qwen_branch",
+      "label": "isolated proposal projection",
+      "variant": "emphasis"
+    },
+    {
+      "id": "gemma_to_assessment",
+      "from": "gemma_branch",
+      "to": "reciprocal_assessment",
+      "label": "proposal A + assessment of B"
+    },
+    {
+      "id": "qwen_to_assessment",
+      "from": "qwen_branch",
+      "to": "reciprocal_assessment",
+      "label": "proposal B + assessment of A"
+    },
+    {
+      "id": "assessment_to_director",
+      "from": "reciprocal_assessment",
+      "to": "director",
+      "label": "validated deliberation",
+      "variant": "emphasis",
+      "labelAt": [
+        745,
+        316
+      ]
+    },
+    {
+      "id": "director_to_candidate",
+      "from": "director",
+      "to": "candidate_plan",
+      "label": "semantic decisions → Python assembly",
+      "variant": "emphasis",
+      "labelAt": [
+        1100,
+        190
+      ]
+    },
+    {
+      "id": "candidate_to_structural",
+      "from": "candidate_plan",
+      "to": "structural_gate",
+      "label": "canonical candidate",
+      "variant": "security",
+      "labelAt": [
+        1110,
+        316
+      ]
+    },
+    {
+      "id": "structural_to_architecture",
+      "from": "structural_gate",
+      "to": "architecture_gate",
+      "label": "protocol certified",
+      "variant": "security",
+      "labelAt": [
+        1110,
+        481
+      ]
+    },
+    {
+      "id": "architecture_to_plan",
+      "from": "architecture_gate",
+      "to": "final_plan",
+      "label": "frozen invariants accepted",
+      "variant": "security",
+      "labelAt": [
+        1110,
+        646
+      ]
+    },
+    {
+      "id": "architecture_to_director",
+      "from": "architecture_gate",
+      "to": "director",
+      "label": "violations → one bounded semantic correction",
+      "variant": "dashed",
+      "labelAt": [
+        980,
+        481
+      ]
+    },
+    {
+      "id": "plan_to_future_seam",
+      "from": "final_plan",
+      "to": "future_execution_seam",
+      "label": "Iteration 3 boundary not entered",
+      "variant": "dashed",
+      "labelAt": [
+        985,
+        811
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Models own semantic content",
+      "items": [
+        "Gemma and Qwen propose independently, then assess only the other proposal through constructive categories.",
+        "The Director authors suggested-change dispositions, overall synthesis, and semantic Plan steps in focused calls.",
+        "Semantic completion asks the same producer for missing meaning; one boundary correction changes only reported violations."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Python owns protocol and acceptance",
+      "items": [
+        "Python assigns trusted IDs, references, authorship, timestamps, status, dependencies, integrity, and certification fields.",
+        "Generic conformance repair gives the same producer one representation-only attempt without semantic advancement.",
+        "The candidate passes structural certification and semantic architecture acceptance before iteration advances to 3."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Authority boundary preserved",
+      "items": [
+        "The Director decides required semantic work; Plan is passive state with no chooser, router, or execution behavior.",
+        "Task Executive and configuration will later resolve concrete models and execute work mechanically; no third manager exists.",
+        "No DirectorTask generation, TaskExecution, ACCEPT/REVISE, persistence, or Iteration 3 behavior is entered here."
+      ]
+    }
+  ]
+}

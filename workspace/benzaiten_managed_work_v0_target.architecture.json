@@ -1,0 +1,620 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Benzaiten Managed Work V0 — FROZEN TARGET",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/VladiVarbanov/benzaiten.git",
+      "link_mode": "local-only",
+      "revision": "959bdff7b83fec64ee46309db180e691f4501fb3"
+    },
+    "viewBox": [
+      1390,
+      780
+    ],
+    "views": [
+      {
+        "id": "normal_planning",
+        "label": "Reciprocal Normal planning",
+        "focus": [
+          "request_snapshot",
+          "gemma_proposal",
+          "qwen_proposal",
+          "reciprocal_assessment",
+          "director",
+          "plan"
+        ],
+        "note": "Independent proposals precede reciprocal constructive assessment and Director synthesis."
+      },
+      {
+        "id": "control_seam",
+        "label": "Director-to-execution seam",
+        "focus": [
+          "director",
+          "plan",
+          "director_task",
+          "task_executive",
+          "task_execution"
+        ],
+        "note": "Director chooses; passive protocols carry intent and evidence; deterministic Python executes."
+      },
+      {
+        "id": "configured_execution",
+        "label": "Configured execution routing",
+        "focus": [
+          "director_task",
+          "task_executive",
+          "routing_transport",
+          "qwen_execution",
+          "task_execution"
+        ],
+        "note": "An honest worker role resolves through configuration; Qwen is an example target, not a frozen role."
+      },
+      {
+        "id": "authority_split",
+        "label": "Semantic vs deterministic authority",
+        "focus": [
+          "director",
+          "plan",
+          "director_task",
+          "task_executive"
+        ],
+        "note": "Semantic relevance and advancement stay with Director; conformance and numeric limits stay deterministic."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "request_snapshot",
+      "type": "external",
+      "label": "Frozen request snapshot",
+      "sublabel": "same input for both proposals",
+      "tag": "current_work_ref",
+      "pos": [
+        30,
+        110
+      ],
+      "size": [
+        200,
+        82
+      ],
+      "sources": [
+        {
+          "path": "protocols/planning/plan_protocol_v0.json",
+          "line": 17,
+          "label": "Plan current_work_ref"
+        }
+      ]
+    },
+    {
+      "id": "gemma_proposal",
+      "type": "cloud",
+      "label": "Gemma planning role",
+      "sublabel": "proposal A · assesses Qwen",
+      "tag": "gemma_worker context",
+      "pos": [
+        320,
+        35
+      ],
+      "size": [
+        220,
+        90
+      ],
+      "sources": [
+        {
+          "path": "protocols/planning/planning_policy.yaml",
+          "line": 13,
+          "end_line": 22,
+          "label": "Normal planning policy"
+        },
+        {
+          "path": "src/config.py",
+          "line": 453,
+          "label": "logical contexts"
+        }
+      ]
+    },
+    {
+      "id": "qwen_proposal",
+      "type": "cloud",
+      "label": "Qwen planning role",
+      "sublabel": "proposal B · assesses Gemma",
+      "tag": "qwen_worker context",
+      "pos": [
+        320,
+        210
+      ],
+      "size": [
+        220,
+        90
+      ],
+      "sources": [
+        {
+          "path": "protocols/planning/planning_policy.yaml",
+          "line": 13,
+          "end_line": 22,
+          "label": "Normal planning policy"
+        },
+        {
+          "path": "src/config.py",
+          "line": 348,
+          "label": "Qwen model configuration"
+        }
+      ]
+    },
+    {
+      "id": "director",
+      "type": "backend",
+      "label": "Gemma Director",
+      "sublabel": "synthesizes · selects · judges",
+      "tag": "semantic authority + advancement",
+      "pos": [
+        920,
+        120
+      ],
+      "size": [
+        220,
+        95
+      ],
+      "sources": [
+        {
+          "path": "src/director.py",
+          "line": 1,
+          "end_line": 5,
+          "label": "semantic boundary"
+        },
+        {
+          "path": "src/config.py",
+          "line": 453,
+          "end_line": 474,
+          "label": "configured Director context"
+        },
+        {
+          "path": "protocols/planning/planning_policy.yaml",
+          "line": 172,
+          "end_line": 178,
+          "label": "Director governance"
+        }
+      ]
+    },
+    {
+      "id": "plan",
+      "type": "database",
+      "label": "Plan",
+      "sublabel": "passive protocol state",
+      "tag": "records · never decides",
+      "pos": [
+        1180,
+        120
+      ],
+      "size": [
+        160,
+        95
+      ],
+      "sources": [
+        {
+          "path": "protocols/planning/plan_protocol_v0.json",
+          "line": 1,
+          "label": "authoritative Plan shape"
+        },
+        {
+          "path": "protocols/planning/planning_policy.yaml",
+          "line": 58,
+          "end_line": 76,
+          "label": "advancement semantics"
+        }
+      ]
+    },
+    {
+      "id": "director_task",
+      "type": "security",
+      "label": "DirectorTask",
+      "sublabel": "selected semantic work intent",
+      "tag": "candidate protocol artifact",
+      "pos": [
+        390,
+        390
+      ],
+      "size": [
+        250,
+        95
+      ],
+      "sources": [
+        {
+          "path": "protocols/director/director_task_protocol_v0.json",
+          "line": 1,
+          "label": "DirectorTask protocol"
+        },
+        {
+          "path": "src/director.py",
+          "line": 40,
+          "end_line": 79,
+          "label": "current partial adapter"
+        }
+      ]
+    },
+    {
+      "id": "task_executive",
+      "type": "security",
+      "label": "Task Executive",
+      "sublabel": "render · resolve · invoke · record",
+      "tag": "mechanical authority · numeric limits",
+      "pos": [
+        730,
+        390
+      ],
+      "size": [
+        240,
+        95
+      ],
+      "sources": [
+        {
+          "path": "src/orchestrator.py",
+          "line": 1,
+          "end_line": 5,
+          "label": "deterministic boundary"
+        },
+        {
+          "path": "src/orchestrator.py",
+          "line": 119,
+          "end_line": 179,
+          "label": "current role resolution"
+        },
+        {
+          "path": "src/config.py",
+          "line": 481,
+          "label": "numeric budgets"
+        }
+      ]
+    },
+    {
+      "id": "task_execution",
+      "type": "database",
+      "label": "TaskExecution",
+      "sublabel": "result · trace · validation evidence",
+      "tag": "authoritative execution record",
+      "pos": [
+        1060,
+        390
+      ],
+      "size": [
+        250,
+        95
+      ],
+      "sources": [
+        {
+          "path": "protocols/execution/task_execution_protocol_v0.json",
+          "line": 1,
+          "label": "TaskExecution protocol"
+        }
+      ]
+    },
+    {
+      "id": "routing_transport",
+      "type": "backend",
+      "label": "Configured routing + ModelClient",
+      "sublabel": "role/context → ModelStruct → HTTP",
+      "tag": "renders Director-selected projection",
+      "pos": [
+        650,
+        620
+      ],
+      "size": [
+        280,
+        90
+      ],
+      "sources": [
+        {
+          "path": "src/config.py",
+          "line": 453,
+          "end_line": 479,
+          "label": "context and role mappings"
+        },
+        {
+          "path": "src/model_client.py",
+          "line": 27,
+          "end_line": 43,
+          "label": "generic client contract"
+        },
+        {
+          "path": "src/model_client.py",
+          "line": 92,
+          "label": "generic HTTP client"
+        }
+      ]
+    },
+    {
+      "id": "qwen_execution",
+      "type": "cloud",
+      "label": "Qwen on PC2",
+      "sublabel": "example configured execution target",
+      "tag": "honest worker role · not frozen reviewer",
+      "pos": [
+        1060,
+        620
+      ],
+      "size": [
+        260,
+        90
+      ],
+      "sources": [
+        {
+          "path": "src/config.py",
+          "line": 348,
+          "label": "remote Qwen endpoint"
+        },
+        {
+          "path": "src/qwen_server.py",
+          "line": 14,
+          "label": "Qwen server profile"
+        }
+      ]
+    },
+    {
+      "id": "reciprocal_assessment",
+      "type": "messagebus",
+      "label": "Reciprocal assessment",
+      "sublabel": "Qwen assesses A · Gemma assesses B",
+      "tag": "after both proposals are captured",
+      "pos": [
+        620,
+        120
+      ],
+      "size": [
+        240,
+        95
+      ],
+      "sources": [
+        {
+          "path": "protocols/planning/plan_protocol_v0.json",
+          "line": 76,
+          "label": "stored critique records"
+        },
+        {
+          "path": "protocols/planning/planning_policy.yaml",
+          "line": 147,
+          "end_line": 155,
+          "label": "convergence policy"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "request_to_gemma",
+      "from": "request_snapshot",
+      "to": "gemma_proposal",
+      "label": "same snapshot",
+      "variant": "emphasis",
+      "labelAt": [
+        275,
+        80
+      ]
+    },
+    {
+      "id": "request_to_qwen",
+      "from": "request_snapshot",
+      "to": "qwen_proposal",
+      "label": "same snapshot",
+      "variant": "emphasis",
+      "labelAt": [
+        275,
+        285
+      ]
+    },
+    {
+      "id": "gemma_to_reciprocal",
+      "from": "gemma_proposal",
+      "to": "reciprocal_assessment",
+      "label": "proposal A",
+      "labelAt": [
+        580,
+        100
+      ]
+    },
+    {
+      "id": "qwen_to_reciprocal",
+      "from": "qwen_proposal",
+      "to": "reciprocal_assessment",
+      "label": "proposal B",
+      "labelAt": [
+        580,
+        280
+      ]
+    },
+    {
+      "id": "reciprocal_to_director",
+      "from": "reciprocal_assessment",
+      "to": "director",
+      "label": "both proposals + assessments",
+      "labelAt": [
+        890,
+        235
+      ]
+    },
+    {
+      "id": "director_to_plan",
+      "from": "director",
+      "to": "plan",
+      "label": "synthesizes + decides",
+      "variant": "emphasis",
+      "labelAt": [
+        1160,
+        235
+      ]
+    },
+    {
+      "id": "director_to_task",
+      "from": "director",
+      "to": "director_task",
+      "label": "emits selected semantic intent",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          1030,
+          310
+        ],
+        [
+          515,
+          310
+        ]
+      ],
+      "labelAt": [
+        775,
+        296
+      ]
+    },
+    {
+      "id": "plan_reference_to_task",
+      "from": "plan",
+      "to": "director_task",
+      "label": "passive references",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right",
+      "via": [
+        [
+          1260,
+          345
+        ],
+        [
+          665,
+          345
+        ],
+        [
+          665,
+          437.5
+        ]
+      ],
+      "labelAt": [
+        1000,
+        331
+      ]
+    },
+    {
+      "id": "task_to_executive",
+      "from": "director_task",
+      "to": "task_executive",
+      "label": "validate → execute only if valid",
+      "variant": "security",
+      "labelAt": [
+        685,
+        505
+      ]
+    },
+    {
+      "id": "executive_to_execution",
+      "from": "task_executive",
+      "to": "task_execution",
+      "label": "records result",
+      "variant": "security",
+      "labelAt": [
+        1015,
+        376
+      ]
+    },
+    {
+      "id": "execution_to_director",
+      "from": "task_execution",
+      "to": "director",
+      "label": "evidence → ACCEPT / REVISE",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          1370,
+          437.5
+        ],
+        [
+          1370,
+          20
+        ],
+        [
+          1030,
+          20
+        ]
+      ],
+      "labelAt": [
+        1195,
+        6
+      ]
+    },
+    {
+      "id": "executive_to_routing",
+      "from": "task_executive",
+      "to": "routing_transport",
+      "label": "selected refs + role",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          850,
+          550
+        ],
+        [
+          790,
+          550
+        ]
+      ],
+      "labelAt": [
+        910,
+        536
+      ]
+    },
+    {
+      "id": "routing_to_qwen",
+      "from": "routing_transport",
+      "to": "qwen_execution",
+      "label": "configured HTTP",
+      "variant": "emphasis",
+      "labelAt": [
+        995,
+        606
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "violet",
+      "title": "Semantic authority",
+      "items": [
+        "Gemma Director chooses semantic relevance, planning advancement, convergence, Plan step, and ACCEPT or REVISE.",
+        "Plan records validated state but is passive; no third manager or coordinator exists.",
+        "Planning policy defines advancement semantics; Director recognizes when meaningful advancement occurred."
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Reciprocal Normal planning",
+      "items": [
+        "Gemma and Qwen receive the same frozen request and produce independent proposals.",
+        "After both are captured, Qwen assesses Gemma and Gemma assesses Qwen constructively.",
+        "Gemma Director synthesizes all validated contributions; models do not certify structural validity."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Deterministic authority",
+      "items": [
+        "Code validates structure, vocabulary, references, IDs, integrity, and protocol conformance.",
+        "Task Executive renders fields and artifact refs selected by Director; it never decides semantic relevance.",
+        "Task Executive counts and enforces numeric budgets; it does not advance semantic iterations."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Configuration and protocol seams",
+      "items": [
+        "participant_role remains semantically honest; configuration maps roles and contexts to models.",
+        "Qwen on PC2 is an initial configured worker target, not permanently reviewer-bound; reviewer is used only for review work.",
+        "Plan → DirectorTask → TaskExecution carries intent and evidence; ModelResponse stays transient and filesystem persistence adds no JobContext."
+      ]
+    }
+  ]
+}
