@@ -208,15 +208,29 @@ semantic_completion:
   same_semantic_producer: true
   semantic_change_scope: missing_decisions_only
 
+semantic_plan_fidelity:
+  rules:
+    - Preserve the user's objective, hard constraints, and explicit success criteria. Choose or revise approaches within that mandate; never silently relax requirements or redefine fulfillment.
+    - Response conformance, useful truthful evidence, selected-work fulfillment, and overall-mandate fulfillment are distinct judgments; one does not imply the next.
+    - Preserve truthful reporting of impossibility, incompatibility, missing evidence, and unsuccessful attempts. A report fulfills the objective only when the original mandate makes it a valid answer; a diagnostic objective may legitimately be fulfilled by a negative finding.
+    - Represent deferred execution evidence as a dependency, uncertainty, or risk. Do not invent its contents, broaden success, or ask an unnecessary question merely because it is deferred. Do not present known-impossible fulfillment as achievable.
+    - Intermediate diagnostic work may be useful within the mandate without replacing the overall requested deliverable or weakening its success criteria.
+    - ACCEPT requires fulfillment of the selected work's legitimate expected result. ACCEPT with continue_work=false requires the Director to judge that the overall original mandate is fulfilled; selected-step success alone is insufficient.
+    - REVISE requires enough evidence and authority for an alternative approach within the unchanged mandate. Do not escalate every unsuccessful attempt when reasonable authorized revision remains available.
+    - ASK_GUIDANCE applies when a material hurdle remains after reasonable authorized resources have been used, or continuation requires authority the Director lacks. Preserve evidence, attempts and findings, remaining uncertainty, options, recommendation, and the specific assistance or decision needed.
+    - The user may supply technical or authority guidance. Persisted permission to consult a frontier adviser does not authorize changing the user's goals, constraints, or success criteria.
+
+# Compatibility key: this is the shared semantic Plan acceptance gate.
 semantic_architecture_acceptance:
   requires_structural_certification: true
   assessor_has_decision_authority: false
   advances_semantic_iteration: false
   acceptance_requires_compliant: true
+  concerns: [architecture_fidelity, original_mandate_fidelity]
 
 semantic_boundary_correction:
   maximum_attempts_per_plan: 1
   consumes_reasoning_task: true
   advances_semantic_iteration: false
   same_director: true
-  semantic_change_scope: identified_architecture_violations_only
+  semantic_change_scope: identified_architecture_or_request_fidelity_violations_only

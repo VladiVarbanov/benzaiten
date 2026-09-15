@@ -338,6 +338,7 @@ def test_valid_selection_builds_trusted_director_task() -> None:
 
     result = select_director_task(
         certified_plan(),
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         task_id="task-iteration-3-1",
         model_caller=caller,
@@ -366,6 +367,15 @@ def test_valid_selection_builds_trusted_director_task() -> None:
     assert [item["number"] for item in plan_projection["eligible_steps"]] == [1]
     assert "task_id" not in projected["required_output"]
     assert "job_ref" not in projected["required_output"]
+    required = projected["required_output"]
+    assert "knowledge_synthesis" in required["capability"]
+    assert "synthesize" in required["action"]
+    assert "fine" in required["focus"]["granularity"]
+    assert "json_object" in required["output_contract_kind"]
+    assert "reviewer" in required["participant_role"]
+    assert "[1]" in required["selected_input_numbers"][0]
+    assert "[1]" in required["selected_step_number"]
+    assert "endpoint" not in json.dumps(required)
 
 
 def test_unknown_trusted_field_receives_one_same_director_repair() -> None:
@@ -374,6 +384,7 @@ def test_unknown_trusted_field_receives_one_same_director_repair() -> None:
 
     result = select_director_task(
         certified_plan(),
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         task_id="task-iteration-3-1",
         model_caller=caller,
@@ -390,6 +401,31 @@ def test_unknown_trusted_field_receives_one_same_director_repair() -> None:
     assert repair["validation_issues"][0]["code"] == "unknown_field"
 
 
+def test_unconfigured_role_and_malformed_input_receive_one_repair() -> None:
+    invalid = {
+        **valid_selection(),
+        "participant_role": "Director",
+        "selected_input_numbers": ["1"],
+    }
+    caller = FakeCaller([invalid, valid_selection()])
+
+    result = select_director_task(
+        certified_plan(),
+        frozen_request="sort these values",
+        job_ref="job-iteration-3",
+        task_id="task-iteration-3-1",
+        model_caller=caller,
+    )
+
+    assert result["director_task"]["participant_role"] == "reviewer"
+    assert len(result["conformance_repairs"]) == 1
+    codes = {
+        issue["code"]
+        for issue in result["conformance_repairs"][0]["validation_issues"]
+    }
+    assert codes >= {"invalid_shape", "invalid_vocabulary", "unconfigured_role"}
+
+
 def test_second_invalid_task_selection_terminates_without_task() -> None:
     invalid = {**valid_selection(), "selected_step_number": 99}
     caller = FakeCaller([invalid, invalid])
@@ -397,6 +433,7 @@ def test_second_invalid_task_selection_terminates_without_task() -> None:
     with pytest.raises(ValueError, match="after one conformance repair"):
         select_director_task(
             certified_plan(),
+            frozen_request="sort these values",
             job_ref="job-iteration-3",
             model_caller=caller,
         )
@@ -412,6 +449,7 @@ def test_uncertified_plan_is_rejected_before_director_call() -> None:
     with pytest.raises(ValueError, match="not_certified|certification"):
         select_director_task(
             plan,
+            frozen_request="sort these values",
             job_ref="job-iteration-3",
             model_caller=caller,
         )
@@ -423,6 +461,7 @@ def test_execution_handoff_rejects_mismatched_trusted_references() -> None:
     caller = FakeCaller([valid_selection()])
     result = select_director_task(
         certified_plan(),
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         task_id="task-iteration-3-1",
         model_caller=caller,
@@ -449,6 +488,7 @@ def test_exhausted_reasoning_budget_prevents_director_call() -> None:
     with pytest.raises(RuntimeError, match="budget exhausted"):
         select_director_task(
             certified_plan(),
+            frozen_request="sort these values",
             job_ref="job-iteration-3",
             model_caller=caller,
             reasoning_task_count=20,
@@ -460,6 +500,7 @@ def task_handoff() -> tuple[dict[str, object], dict[str, object]]:
     plan = certified_plan()
     result = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         task_id="task-iteration-3-1",
         model_caller=FakeCaller([valid_selection()]),
@@ -610,6 +651,7 @@ def test_text_output_contract_gates_representation_only() -> None:
     plan = certified_plan()
     handoff = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         model_caller=FakeCaller([selection]),
     )
@@ -808,6 +850,7 @@ def test_director_selects_semantic_resource_number_not_mechanics() -> None:
 
     result = select_director_task(
         certified_plan(),
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         available_resources=[resource],
         model_caller=caller,
@@ -847,6 +890,7 @@ def test_configured_local_resource_tool_builds_task_execution(
     plan = certified_plan()
     handoff = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         available_resources=[resource],
         model_caller=FakeCaller([resource_selection()]),
@@ -889,6 +933,7 @@ def test_unconfigured_web_resource_fails_explicitly_without_fallback() -> None:
     plan = certified_plan()
     handoff = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         available_resources=[resource],
         model_caller=FakeCaller([resource_selection()]),
@@ -927,6 +972,7 @@ def test_configured_web_resource_uses_only_configured_provider(
     plan = certified_plan()
     handoff = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         available_resources=[resource],
         model_caller=FakeCaller([resource_selection()]),
@@ -973,6 +1019,7 @@ def test_configured_local_model_worker_receives_selected_source(
     plan = certified_plan()
     handoff = select_director_task(
         plan,
+        frozen_request="sort these values",
         job_ref="job-iteration-3",
         available_resources=[resource],
         model_caller=FakeCaller([
@@ -1129,6 +1176,7 @@ def test_director_accept_is_recorded_in_existing_task_execution_fields() -> None
 
     result = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1163,14 +1211,16 @@ def test_director_accept_is_recorded_in_existing_task_execution_fields() -> None
 
     projected = json.loads(caller.calls[0][1][1]["content"])
     assert set(projected) == {
+        "frozen_request", "semantic_plan_fidelity", "prior_execution_evidence",
         "certified_plan",
         "selected_step",
         "director_task",
         "task_execution",
-        "numbered_evidence",
-        "numbered_accepted_checkpoints",
-        "required_output",
-    }
+            "numbered_evidence",
+            "numbered_accepted_checkpoints",
+            "required_output",
+            "conditional_field_rules",
+        }
     assert "trace" not in projected["task_execution"]
     assert "provenance" not in projected["task_execution"]
     assert "planning_cycle" not in projected["certified_plan"]
@@ -1184,6 +1234,7 @@ def test_director_revise_selects_the_certified_root_checkpoint() -> None:
 
     result = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1217,6 +1268,7 @@ def test_null_checkpoint_outcome_is_valid_only_for_certified_root() -> None:
     plan, handoff, execution_result = executed_task()
     evaluated = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1288,6 +1340,7 @@ def test_revise_always_requests_successor_plan_semantics() -> None:
 
     result = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1311,6 +1364,7 @@ def test_invalid_evaluation_receives_one_same_director_repair() -> None:
 
     result = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1327,6 +1381,17 @@ def test_invalid_evaluation_receives_one_same_director_repair() -> None:
         "gemma_director"
     )
 
+    initial_projection = json.loads(caller.calls[0][1][1]["content"])
+    assert initial_projection["conditional_field_rules"]["ACCEPT"] == {
+        "backtrack_checkpoint_number": None,
+        "continue_work": "boolean",
+        "guidance": None,
+    }
+    repair_projection = json.loads(caller.calls[1][1][1]["content"])
+    assert repair_projection["valid_references"][
+        "conditional_field_rules"
+    ]["REVISE"]["guidance"] is None
+
 
 def test_second_invalid_evaluation_terminates() -> None:
     plan, handoff, execution_result = executed_task()
@@ -1336,6 +1401,7 @@ def test_second_invalid_evaluation_terminates() -> None:
     with pytest.raises(ValueError, match="after one conformance repair"):
         evaluate_task_execution(
             execution_result["task_execution"],
+            frozen_request="sort these values",
             certified_plan=plan,
             selected_step=handoff["selected_step"],
             director_task=handoff["director_task"],
@@ -1356,6 +1422,7 @@ def test_mismatched_execution_evidence_is_rejected_before_evaluation() -> None:
     with pytest.raises(ValueError, match="rejected TaskExecution evidence"):
         evaluate_task_execution(
             execution,
+            frozen_request="sort these values",
             certified_plan=plan,
             selected_step=handoff["selected_step"],
             director_task=handoff["director_task"],
@@ -1369,6 +1436,7 @@ def test_outcome_record_rejects_unknown_semantic_fields() -> None:
     plan, handoff, execution_result = executed_task()
     evaluated = evaluate_task_execution(
         execution_result["task_execution"],
+        frozen_request="sort these values",
         certified_plan=plan,
         selected_step=handoff["selected_step"],
         director_task=handoff["director_task"],
@@ -1458,6 +1526,7 @@ def test_revise_creates_successor_plan_before_next_task() -> None:
         wrong,
         revise_evaluation(),
         successor_plan_semantics(),
+        {"compliant": True, "violations": []},
         valid_selection(),
         exact_worker_result(),
         accept_evaluation(),
@@ -1475,12 +1544,13 @@ def test_revise_creates_successor_plan_before_next_task() -> None:
     )
 
     assert result["status"] == "accepted"
-    assert len(caller.calls) == 7
+    assert len(caller.calls) == 8
     assert [call[0] for call in caller.calls] == [
         "gemma_director",
         "qwen_worker",
         "gemma_director",
         "gemma_director",
+        "gemma_worker",
         "gemma_director",
         "qwen_worker",
         "gemma_director",
@@ -1497,7 +1567,7 @@ def test_revise_creates_successor_plan_before_next_task() -> None:
     assert [
         item["semantics"]["decision"] for item in result["evaluations"]
     ] == ["REVISE", "ACCEPT"]
-    assert result["reasoning_task_count"] == 7
+    assert result["reasoning_task_count"] == 8
     assert json.dumps(original, sort_keys=True) == frozen_original
     assert [plan["revision_ref"] for plan in result["plan_history"]] == [
         "plan-iteration-3@r1", "plan-iteration-3@r2",
@@ -1528,10 +1598,12 @@ def test_multiple_revises_create_chronological_plan_nodes() -> None:
         wrong,
         revise_evaluation(),
         successor_plan_semantics("revision two"),
+        {"compliant": True, "violations": []},
         valid_selection(),
         wrong,
         revise_evaluation(),
         successor_plan_semantics("revision three"),
+        {"compliant": True, "violations": []},
         valid_selection(),
         exact_worker_result(),
         accept_evaluation(),
@@ -1570,10 +1642,12 @@ def test_revise_can_backtrack_to_a_real_execution_accept_checkpoint() -> None:
         exact_worker_result(),
         accept_evaluation(continue_work=True),
         successor_plan_semantics("continued work"),
+        {"compliant": True, "violations": []},
         valid_selection(),
         wrong,
         revise_evaluation(checkpoint_number=2),
         successor_plan_semantics("execution-checkpoint backtrack"),
+        {"compliant": True, "violations": []},
         valid_selection(),
         exact_worker_result(),
         accept_evaluation(),
@@ -1827,6 +1901,7 @@ def test_execution_transition_budget_stops_before_unconfigured_r5() -> None:
         ])
         if revision < 4:
             outputs.append(successor_plan_semantics(f"revision {revision + 1}"))
+            outputs.append({"compliant": True, "violations": []})
     caller = FakeCaller(outputs)
 
     result = run_iteration_3(
@@ -1851,6 +1926,298 @@ def test_execution_transition_budget_stops_before_unconfigured_r5() -> None:
         "can_create_successor": False,
         "current_plan_ref": "plan-iteration-3@r4",
     }
+
+
+# These fixtures supply model judgments. They validate wiring, not live reasoning.
+FEASIBLE_MANDATE = (
+    "Produce a feasible configuration and a validation record. "
+    "An incompatibility report is useful evidence, not alternative fulfillment. "
+    "Do not relax mandatory constraints without user authority. "
+    "Detailed constraints arrive during execution."
+)
+IMPOSSIBILITY_EVIDENCE = {
+    "configuration": None,
+    "constraints": [{"id": "minimum", "x_min": 10}, {"id": "maximum", "x_max": 5}],
+    "proof": "Every feasible X would require 10 <= X <= 5; the intersection is empty.",
+}
+
+
+def mandate_root(request: str) -> dict[str, object]:
+    from hashlib import sha256
+
+    plan = certified_plan()
+    reference = "request:" + sha256(request.encode("utf-8")).hexdigest()
+    plan["current_work_ref"] = reference
+    for step in plan["steps"]:
+        step["target_ref"] = reference
+    plan["goal"] = "Produce a feasible configuration."
+    plan["steps"] = plan["steps"][:1]
+    plan["steps"][0].update(
+        action="Determine and validate a feasible configuration.",
+        instructions=["Use execution-time constraints; report impossibility truthfully."],
+        expected_result="A feasible configuration with constraint-by-constraint validation.",
+        validation=["Every mandatory constraint is satisfied."],
+    )
+    return plan
+
+
+@pytest.mark.parametrize("inputs", [{}, {"wrong": "contents"}, "not a mapping"])
+def test_missing_original_mandate_stops_before_reasoning(inputs: object) -> None:
+    from orchestrator import resolve_original_request
+
+    plan = mandate_root(FEASIBLE_MANDATE)
+    with pytest.raises(ValueError, match="Original request"):
+        resolve_original_request(plan, inputs)
+
+
+def test_original_mandate_digest_checked_before_run_and_after_reload(tmp_path: Path) -> None:
+    request = "Determine whether the authoritative requirements are feasible."
+    plan = mandate_root(request)
+    plan["goal"] = request
+    plan["steps"][0].update(
+        action="Assess joint feasibility of the requirements.",
+        expected_result="A supported feasibility determination, including an infeasibility proof when applicable.",
+        validation=["The evidence supports the feasibility determination."],
+    )
+    inputs = {plan["current_work_ref"]: request}
+    caller = FakeCaller([])
+    with pytest.raises(ValueError, match="digest"):
+        run_iteration_3(
+            plan, job_ref="tampered", resolved_inputs={plan["current_work_ref"]: "Weakened mandate"},
+            model_caller=caller, artifact_root=tmp_path,
+        )
+    assert caller.calls == []
+    with pytest.raises(ValueError, match="digest"):
+        persist_managed_work_run(
+            {"plan_history": [plan]}, job_ref="tampered-persist",
+            resolved_inputs={plan["current_work_ref"]: "Weakened mandate"},
+            artifact_root=tmp_path,
+        )
+    assert not managed_work_artifact_paths("tampered-persist", artifact_root=tmp_path)["request"].exists()
+
+    caller = FakeCaller([valid_selection(), IMPOSSIBILITY_EVIDENCE, accept_evaluation()])
+    result = run_iteration_3(
+        plan, job_ref="diagnostic", resolved_inputs=inputs,
+        model_caller=caller, artifact_root=tmp_path,
+    )
+    assert result["status"] == "accepted"  # Supplied semantic judgment is authoritative.
+    paths = managed_work_artifact_paths("diagnostic", artifact_root=tmp_path)
+    snapshot = json.loads(paths["request"].read_text())
+    snapshot["resolved_inputs"][plan["current_work_ref"]] = "Weakened mandate"
+    paths["request"].write_text(json.dumps(snapshot))
+    with pytest.raises(ValueError, match="digest"):
+        load_managed_work_state("diagnostic", artifact_root=tmp_path)
+
+
+def test_impossibility_guidance_keeps_completed_execution_and_original_mandate(tmp_path: Path) -> None:
+    plan = mandate_root(FEASIBLE_MANDATE)
+    guidance = ask_guidance_evaluation(target="frontier")
+    guidance["reason"] = "The requested configuration cannot exist without changing a mandatory requirement."
+    guidance["guidance"].update(
+        hurdle="Mandatory minimum 10 exceeds maximum 5.",
+        materiality="No requested feasible configuration exists.",
+        attempts=[{
+            "description": "Intersected all mandatory bounds.",
+            "established": "The intersection is empty.",
+            "evidence_numbers": [1],
+        }],
+        remaining_unresolved="Which constraint, if any, may be changed?",
+        options=["Authorize lowering the minimum.", "Authorize raising the maximum.", "Keep requirements and pause."],
+        recommendation="Ask the requirement owner which bound may change.",
+        question="May either mandatory bound be relaxed, and which one?",
+    )
+    caller = FakeCaller([valid_selection(), IMPOSSIBILITY_EVIDENCE, guidance])
+    result = run_iteration_3(
+        plan, job_ref="impossible", resolved_inputs={plan["current_work_ref"]: FEASIBLE_MANDATE},
+        model_caller=caller, artifact_root=tmp_path,
+    )
+    execution = result["task_executions"][0]
+    assert execution["control"]["status"] == "completed"
+    assert execution["plan_execution"]["validation_outcome"] == "passed"
+    assert execution["result"]["content"] == IMPOSSIBILITY_EVIDENCE
+    assert result["resume_state"]["status"] == "awaiting_guidance"
+    assert result["execution_transition_state"]["consumed"] == 0
+    assert result["task_executions"][0]["plan_execution"]["outcomes"][0]["guidance"]["target"] == "user"
+    for index in (0, 2):
+        payload = json.loads(caller.calls[index][1][1]["content"])
+        assert payload["frozen_request"] == FEASIBLE_MANDATE
+        assert "semantic_plan_fidelity" in payload
+    restored = load_managed_work_state("impossible", artifact_root=tmp_path)
+    assert restored["resume_state"] == result["resume_state"]
+    assert restored["resolved_inputs"][plan["current_work_ref"]] == FEASIBLE_MANDATE
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_successor_fidelity_gate_precedes_publication(corrected: bool, tmp_path: Path) -> None:
+    request = FEASIBLE_MANDATE + " Either approved method A or B may be used."
+    plan = mandate_root(request)
+    before = json.dumps(plan, sort_keys=True)
+    evidence = {"method_A": "unavailable", "method_B": "authorized and available"}
+    bad = successor_plan_semantics("unauthorized relaxation")
+    bad["plan_steps"]["steps"][0]["expected_result"] = "A configuration OR an incompatibility report."
+    good = successor_plan_semantics("authorized method B")
+    good["overall_synthesis"]["goal"] = plan["goal"]
+    good["plan_steps"]["steps"][0].update(
+        action="Determine and validate a feasible configuration using method B.",
+        instructions=["Apply authorized method B without relaxing mandatory constraints."],
+        expected_result=plan["steps"][0]["expected_result"],
+        validation=plan["steps"][0]["validation"],
+    )
+    violation = {
+        "compliant": False,
+        "violations": [{
+            "finding": "The original request excludes a report as fulfillment; candidate expected_result accepts it.",
+            "affected_step_or_field": "steps[0].expected_result",
+        }],
+    }
+    outputs = [
+        valid_selection(), evidence, revise_evaluation(), bad,
+        violation, good,
+        {"compliant": True, "violations": []} if corrected else violation,
+    ]
+    if corrected:
+        outputs.extend([valid_selection(), {"configuration": {"x": 12}}, accept_evaluation()])
+    caller = FakeCaller(outputs)
+    result = run_iteration_3(
+        plan, job_ref="successor-fidelity", resolved_inputs={plan["current_work_ref"]: request},
+        model_caller=caller, artifact_root=tmp_path,
+    )
+    assert json.dumps(plan, sort_keys=True) == before
+    assert len(result["semantic_boundary_corrections"]) == 1
+    assert result["conformance_repairs"] == []
+    paths = managed_work_artifact_paths("successor-fidelity", artifact_root=tmp_path)
+    assert json.loads((paths["plans"] / "rev-0001.json").read_text()) == plan
+    for index in (0, 2, 3, 4, 5, 6):
+        payload = json.loads(caller.calls[index][1][1]["content"])
+        assert payload["frozen_request"] == request
+        assert "semantic_plan_fidelity" in payload
+    assert caller.calls[4][0] == caller.calls[6][0] == "gemma_worker"
+    assert caller.calls[5][0] == "gemma_director"
+    outcome = result["task_executions"][0]["plan_execution"]["outcomes"][0]
+    assert outcome["decision"] == "REVISE"
+    assert outcome["checkpoint_revision_ref"] == plan["revision_ref"]
+    assert outcome["checkpoint_outcome_ref"] is None
+    assert result["task_executions"][0]["result"]["content"] == evidence
+    if corrected:
+        assert result["status"] == "accepted"
+        assert result["execution_transition_state"]["consumed"] == 1
+        successor = result["plan_history"][1]
+        assert successor["revision"] == 2
+        assert successor["based_on_revision_ref"] == plan["revision_ref"]
+        assert successor["steps"][0]["expected_result"] == good["plan_steps"]["steps"][0]["expected_result"]
+        assert outcome["resulting_plan_ref"] == successor["revision_ref"]
+        gate_calls = json.loads(caller.calls[4][1][1]["content"])
+        assert gate_calls["execution_context"]["triggering_execution"]["result"]["content"] == evidence
+    else:
+        assert result["status"] == "semantic_plan_unresolved"
+        assert "excludes a report" in result["semantic_plan_error"]
+        assert result["resume_state"]["status"] == "unresolved"
+        assert result["resume_state"]["current_plan_ref"] == plan["revision_ref"]
+        assert result["execution_transition_state"]["consumed"] == 0
+        assert outcome["resulting_plan_ref"] is None
+        assert not (paths["plans"] / "rev-0002.json").exists()
+    assert load_managed_work_state("successor-fidelity", artifact_root=tmp_path)["resume_state"] == result["resume_state"]
+
+
+def test_intermediate_accept_preserves_overall_mandate_until_completion(tmp_path: Path) -> None:
+    request = FEASIBLE_MANDATE + " Either approved method A or B may be used."
+    plan = mandate_root(request)
+    successor = successor_plan_semantics("method B")
+    successor["overall_synthesis"]["goal"] = plan["goal"]
+    successor["plan_steps"]["steps"][0].update(
+        action=plan["steps"][0]["action"],
+        instructions=["Apply approved method B and validate every mandatory constraint."],
+        expected_result=plan["steps"][0]["expected_result"],
+        validation=plan["steps"][0]["validation"],
+    )
+    plan["steps"][0].update(
+        action="Determine which approved methods are available.",
+        instructions=["Inspect availability evidence for both approved methods."],
+        expected_result="An evidence-backed assessment of approved method availability.",
+        validation=["Both approved methods have an evidence-backed availability status."],
+    )
+    inputs = {plan["current_work_ref"]: request}
+    outputs = [
+        valid_selection(), {"diagnosis": "Method A is unavailable; B remains authorized."},
+        accept_evaluation(continue_work=True), successor,
+        {"compliant": True, "violations": []},
+        valid_selection(), {"configuration": {"x": 12}}, accept_evaluation(),
+    ]
+    caller = FakeCaller(outputs)
+    result = run_iteration_3(
+        plan, job_ref="intermediate", resolved_inputs=inputs,
+        model_caller=caller, artifact_root=tmp_path,
+    )
+    assert len(result["task_executions"]) == 2
+    assert result["resume_state"]["status"] == "completed"
+    first = result["task_executions"][0]["plan_execution"]["outcomes"][0]
+    assert first["decision"] == "ACCEPT"
+    assert first["resulting_plan_ref"].endswith("@r2")
+    for index in (2, 7):
+        system = caller.calls[index][1][0]["content"]
+        assert "intermediate step success alone is insufficient" in system
+        payload = json.loads(caller.calls[index][1][1]["content"])
+        assert payload["frozen_request"] == request
+        assert "steps" in payload["certified_plan"]
+    final_payload = json.loads(caller.calls[7][1][1]["content"])
+    assert final_payload["prior_execution_evidence"][0]["outcomes"][0]["id"] == first["id"]
+
+
+@pytest.mark.parametrize("recovered", [True, False])
+@pytest.mark.parametrize("mode", ["conformance", "semantic_completion"])
+def test_successor_gate_recovery_is_bounded_and_grounded(
+    mode: str, recovered: bool, tmp_path: Path,
+) -> None:
+    malformed = {"compliant": "true", "violations": []}
+    incomplete = {}
+    initial = malformed if mode == "conformance" else incomplete
+    outputs = [
+        valid_selection(), {"ordered": ["pear", "apple", "banana"], "count": 3},
+        revise_evaluation(), successor_plan_semantics(), initial,
+        {"compliant": True, "violations": []} if recovered else initial,
+    ]
+    if recovered:
+        outputs.extend([valid_selection(), exact_worker_result(), accept_evaluation()])
+    caller = FakeCaller(outputs)
+    result = run_iteration_3(
+        certified_plan(), job_ref="gate-recovery",
+        resolved_inputs={"request:abc123": "sort these values"},
+        model_caller=caller, artifact_root=tmp_path,
+    )
+    assert caller.calls[4][0] == caller.calls[5][0] == "gemma_worker"
+    assert len(result["conformance_repairs"]) == (1 if mode == "conformance" else 0)
+    assert len(result["semantic_completions"]) == (1 if mode == "semantic_completion" else 0)
+    assert result["semantic_boundary_corrections"] == []
+    assert result["semantic_iteration_count"] == 3
+    assert result["execution_transition_state"]["consumed"] == (1 if recovered else 0)
+    assert result["status"] == ("accepted" if recovered else "semantic_plan_unresolved")
+    assert len(caller.calls) == (9 if recovered else 6)
+    if mode == "semantic_completion":
+        payload = json.loads(caller.calls[5][1][1]["content"])
+        assert payload["frozen_request"] == "sort these values"
+        context = payload["semantic_context"]
+        assert context["frozen_architecture_invariants"]
+        assert context["candidate_plan"]["revision_ref"].endswith("@r2")
+        assert context["execution_context"]["triggering_execution"]["result"]["content"] == outputs[1]
+    assert load_managed_work_state("gate-recovery", artifact_root=tmp_path)["resume_state"] == result["resume_state"]
+
+
+def test_successor_gate_budget_exhaustion_preserves_evidence_without_transition(tmp_path: Path) -> None:
+    caller = FakeCaller([
+        valid_selection(), IMPOSSIBILITY_EVIDENCE, revise_evaluation(),
+        successor_plan_semantics(),
+    ])
+    result = run_iteration_3(
+        certified_plan(), job_ref="gate-budget",
+        resolved_inputs={"request:abc123": FEASIBLE_MANDATE},
+        model_caller=caller, artifact_root=tmp_path, reasoning_task_limit=4,
+    )
+    assert result["status"] == "semantic_plan_unresolved"
+    assert "budget exhausted" in result["semantic_plan_error"]
+    assert result["reasoning_task_count"] == 4
+    assert result["execution_transition_state"]["consumed"] == 0
+    assert result["resume_state"]["status"] == "unresolved"
+    assert result["task_executions"][0]["control"]["status"] == "completed"
 
 
 def test_iteration_3_requires_certified_plan_semantic_iteration() -> None:

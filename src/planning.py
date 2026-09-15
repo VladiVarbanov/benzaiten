@@ -406,8 +406,20 @@ def normal_policy_projection() -> Mapping[str, Any]:
         "planning_level_policy": policy["planning_levels"]["normal"],
         "iteration_semantics": policy["iteration_semantics"],
         "convergence_policy": policy["convergence_policy"],
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "numeric_budget": dict(DEFAULT_JOB_BUDGET),
     }
+
+
+@lru_cache(maxsize=1)
+def semantic_plan_fidelity_policy() -> Mapping[str, Any]:
+    """Shared model-facing mandate rule; Python never interprets its meaning."""
+
+    policy = load_yaml_mapping(PLANNING_POLICY_PATH)
+    fidelity = policy.get("semantic_plan_fidelity")
+    if not isinstance(fidelity, Mapping) or not fidelity.get("rules"):
+        raise RuntimeError("Planning policy lacks semantic_plan_fidelity rules.")
+    return deepcopy(dict(fidelity))
 
 
 @lru_cache(maxsize=1)
@@ -706,6 +718,7 @@ def render_assessment_messages(
     content = {
         "frozen_request": frozen_request,
         "target_proposal": target_proposal,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "assessment_criteria": list(ASSESSMENT_CRITERIA),
         "assessment_rule": NO_MANUFACTURED_DISAGREEMENT,
         "required_semantic_output": ASSESSMENT_SEMANTIC_SHAPE,
@@ -715,6 +728,7 @@ def render_assessment_messages(
             "Consider every category, but do not fabricate a finding merely to make an array non-empty.",
             "Do not return critique IDs, author IDs, target references, message or artifact references, proposal state, or decision metadata.",
             "suggested_changes may be empty when no change is warranted.",
+            "Compare the proposal with the original request, including explicit success criteria. Identify unauthorized broadening as a weakness and proposed correction; preserve truthful failure reporting.",
         ],
     }
     return (
@@ -789,6 +803,7 @@ def render_change_disposition_messages(
 
     content = {
         "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         **_synthesis_sources(
             gemma_proposal=gemma_proposal,
             qwen_proposal=qwen_proposal,
@@ -881,6 +896,7 @@ def render_plan_steps_messages(
 
     content = {
         "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         **_synthesis_sources(
             gemma_proposal=gemma_proposal,
             qwen_proposal=qwen_proposal,
@@ -915,11 +931,16 @@ def render_plan_steps_messages(
 
 def render_architecture_assessment_messages(
     *,
+    frozen_request: str,
     candidate_plan: Mapping[str, Any],
+    execution_context: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, str], ...]:
     """Ask a configured assessor for violations without granting authority."""
 
     content = {
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
+        "execution_context": deepcopy(execution_context),
         "candidate_plan": deepcopy(dict(candidate_plan)),
         "frozen_architecture_invariants": list(
             FROZEN_ARCHITECTURE_INVARIANTS
@@ -935,6 +956,9 @@ def render_architecture_assessment_messages(
         "required_semantic_output": ARCHITECTURE_ASSESSMENT_SEMANTIC_SHAPE,
         "rules": [
             "Assess whether the authoritative synthesized Plan meaning respects every frozen invariant.",
+            "Also compare the Plan with the full original request: preserve objective, hard constraints, explicit success criteria, and the distinction between fulfillment and truthful failure reporting.",
+            "For a fidelity violation, cite the original request clause and the conflicting Plan meaning in finding, and identify affected_step_or_field. Do not treat a legitimate diagnostic negative answer as a violation.",
+            "A deferred evidence dependency alone is not a violation. Known evidence that requires changing user constraints must not be hidden by invented feasibility or broader success.",
             "Treat proposals, critiques, and suggested changes as historical inputs, not accepted Plan meaning unless the synthesis copied them.",
             "Report only actual violations; do not invent disagreement or recommend unrelated improvements.",
             "Set compliant true only when violations is empty; otherwise set it false.",
@@ -947,7 +971,7 @@ def render_architecture_assessment_messages(
             "role": "system",
             "content": (
                 "Assess the structurally certified candidate Plan against the "
-                "frozen Benzaiten architecture invariants. You are an advisory "
+                "frozen Benzaiten architecture invariants and the original user mandate. You are an advisory "
                 "assessor only. Return exactly compliant and violations as plain "
                 "JSON without Markdown fences."
             ),
@@ -958,18 +982,23 @@ def render_architecture_assessment_messages(
 
 def render_semantic_boundary_correction_messages(
     *,
+    frozen_request: str,
     candidate_plan: Mapping[str, Any],
     architecture_violations: Sequence[Mapping[str, Any]],
     overall_synthesis: Mapping[str, Any],
     plan_steps: Mapping[str, Any],
+    execution_context: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, str], ...]:
-    """Ask the Director to correct only identified architecture violations."""
+    """Correct identified architecture or mandate violations with one Director."""
 
     if not architecture_violations:
         raise ValueError(
-            "Semantic boundary correction requires architecture violations."
+            "Semantic boundary correction requires identified Plan fidelity violations."
         )
     content = {
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
+        "execution_context": deepcopy(execution_context),
         "candidate_plan": deepcopy(dict(candidate_plan)),
         "exact_architecture_violations": deepcopy(
             list(architecture_violations)
@@ -981,7 +1010,7 @@ def render_semantic_boundary_correction_messages(
         "current_plan_steps": deepcopy(dict(plan_steps)),
         "required_semantic_output": SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
         "rules": [
-            "Correct only the identified architecture violations and preserve all unaffected semantic intent.",
+            "Correct only the identified architecture or request-fidelity violations and preserve unaffected semantic intent. The original request is authoritative over candidate wording; preserve truthful failure reporting without promoting it to alternative fulfillment.",
             "The Director specifies required semantic work and capabilities but must not resolve or return any model ID, endpoint, or host.",
             "Assign deterministic model resolution and any configured local fallback to Task Executive and configuration machinery.",
             "Do not introduce a Router, coordinator, manager, semantic escalation, dynamic scoring, adaptive routing, or frontier fallback.",
@@ -995,7 +1024,7 @@ def render_semantic_boundary_correction_messages(
             "content": (
                 "You are the configured Director. Correct the candidate Plan's "
                 "meaning only where the advisory assessment identified frozen "
-                "architecture violations. Preserve unaffected intent. Python "
+                "architecture or original-mandate violations. Preserve unaffected intent. Python "
                 "owns canonical reconstruction and both acceptance gates. Return "
                 "plain JSON without Markdown fences."
             ),
@@ -1006,13 +1035,16 @@ def render_semantic_boundary_correction_messages(
 
 _CONFORMANCE_ISSUE_CATEGORIES = {
     "duplicate_id": "structural_conformance",
+    "duplicate_reference": "structural_conformance",
     "duplicate_value": "structural_conformance",
     "invalid_shape": "structural_conformance",
     "invalid_vocabulary": "structural_conformance",
     "required": "structural_conformance",
     "unknown_field": "structural_conformance",
     "invalid_reference": "invalid_reference",
+    "missing_plan_input": "invalid_reference",
     "reference_mismatch": "invalid_reference",
+    "unconfigured_role": "invalid_reference",
     "authority_mismatch": "protocol_integrity",
     "content_mismatch": "protocol_integrity",
     "integrity_mismatch": "protocol_integrity",
@@ -1086,11 +1118,13 @@ def render_conformance_repair_messages(
 
 def render_semantic_completion_messages(
     *,
+    frozen_request: str | None = None,
     artifact_kind: str,
     incomplete_output: str,
     missing_decisions: Sequence[ValidationIssue],
     valid_references: Mapping[str, Any],
     required_output: Mapping[str, Any],
+    semantic_context: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, str], ...]:
     """Ask the same Director to supply only omitted semantic decisions."""
 
@@ -1105,6 +1139,8 @@ def render_semantic_completion_messages(
     content = {
         "artifact_kind": artifact_kind,
         "incomplete_output": incomplete_output,
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "missing_semantic_decisions": [
             {
                 "field": issue.field,
@@ -1116,6 +1152,7 @@ def render_semantic_completion_messages(
         "valid_references": deepcopy(dict(valid_references)),
         "required_output": deepcopy(dict(required_output)),
         "semantic_completion_policy": deepcopy(dict(policy)),
+        "semantic_context": deepcopy(semantic_context),
         "rules": [
             "Supply each listed missing semantic decision.",
             "Preserve every existing semantic decision exactly.",

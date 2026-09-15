@@ -1265,6 +1265,29 @@ def validate_managed_work_resume(
     return tuple(errors)
 
 
+def resolve_original_request(
+    root_plan: Mapping[str, object],
+    resolved_inputs: Mapping[str, object],
+) -> str:
+    """Resolve immutable mandate contents; verify identity, never meaning."""
+
+    reference = root_plan.get("current_work_ref")
+    if not isinstance(resolved_inputs, Mapping):
+        raise ValueError("Original request input mapping is unavailable.")
+    if not isinstance(reference, str):
+        raise ValueError("Root Plan lacks an original request reference.")
+    request = resolved_inputs.get(reference)
+    if not isinstance(request, str) or not request.strip():
+        raise ValueError("Original request contents are unavailable; Plan summaries cannot replace the mandate.")
+    # Normal planning creates request:<sha256>; other trusted callers may use
+    # opaque references. Never reinterpret either as a semantic summary.
+    digest = reference.removeprefix("request:")
+    if reference.startswith("request:") and len(digest) == 64:
+        if hashlib.sha256(request.encode("utf-8")).hexdigest() != digest:
+            raise ValueError("Original request digest does not match the root Plan reference.")
+    return request
+
+
 def persist_managed_work_run(
     run_result: Mapping[str, object],
     *,
@@ -1276,6 +1299,13 @@ def persist_managed_work_run(
     """Persist immutable run artifacts and atomically advance resume.json."""
 
     from task_execution import validate_task_execution_mapping
+
+    plans = run_result.get("plan_history")
+    if not isinstance(plans, list) or not plans:
+        raise ValueError("Managed-work result lacks immutable Plan history.")
+    if not isinstance(plans[0], Mapping):
+        raise ValueError("Managed-work Plan history contains a non-object.")
+    resolve_original_request(plans[0], resolved_inputs)
 
     paths = managed_work_artifact_paths(
         job_ref, artifact_root=artifact_root,
@@ -1293,9 +1323,6 @@ def persist_managed_work_run(
     }
     _write_json_once(paths["request"], request)
 
-    plans = run_result.get("plan_history")
-    if not isinstance(plans, list) or not plans:
-        raise ValueError("Managed-work result lacks immutable Plan history.")
     plan_paths: dict[str, Path] = {}
     for plan in plans:
         if not isinstance(plan, Mapping):
@@ -1407,7 +1434,7 @@ def persist_managed_work_run(
             raise ValueError(
                 "awaiting_guidance requires a persisted ASK_GUIDANCE outcome."
             )
-    elif run_status == "execution_transition_budget_exhausted":
+    elif run_status in {"execution_transition_budget_exhausted", "semantic_plan_unresolved"}:
         resume_status = "unresolved"
     else:
         resume_status = "active"
@@ -1584,6 +1611,7 @@ def load_managed_work_state(
     request_state = read_json(paths["request"])
     if not isinstance(request_state, Mapping):
         raise ValueError("Persisted managed-work request must be an object.")
+    resolve_original_request(plans[0], request_state.get("resolved_inputs", {}))
     call_requests = [
         read_json(path)
         for path in sorted(paths["calls"].glob("*.request.json"))

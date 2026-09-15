@@ -6,7 +6,7 @@ from dataclasses import dataclass, fields
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from config import DIRECTOR_TASK_VOCABULARY_PATH
 from structures import ValidationIssue, load_yaml_mapping
@@ -722,14 +722,17 @@ def director_task_selection_response_format(
 
 def render_director_task_selection_messages(
     *,
+    frozen_request: str,
     certified_plan: Mapping[str, object],
     eligible_steps: Sequence[Mapping[str, object]],
     available_inputs: Sequence[Mapping[str, object]],
+    required_output: Mapping[str, object],
     revision_evidence: Optional[Mapping[str, object]] = None,
 ) -> tuple[dict[str, str], ...]:
     """Project only certified Plan facts needed for semantic task selection."""
 
     import json
+    from planning import semantic_plan_fidelity_policy
 
     plan_final = certified_plan["final"]
     assert isinstance(plan_final, Mapping)
@@ -760,6 +763,8 @@ def render_director_task_selection_messages(
         ],
     }
     user_content: dict[str, object] = {
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "certified_plan_projection": projection,
         "available_inputs": [
             {
@@ -770,7 +775,7 @@ def render_director_task_selection_messages(
             }
             for item in available_inputs
         ],
-        "required_output": DIRECTOR_TASK_SELECTION_SEMANTIC_SHAPE,
+        "required_output": dict(required_output),
         "trusted_fields_assigned_by_python": [
             "task_id", "job_ref", "work_kind", "plan_ref",
             "input_refs", "target", "output_contract_ref",
@@ -806,6 +811,39 @@ def render_director_task_selection_messages(
             "content": json.dumps(user_content, sort_keys=True),
         },
     )
+
+
+def director_task_selection_required_output(
+    *,
+    eligible_step_numbers: Sequence[int],
+    available_input_numbers: Sequence[int],
+    configured_participant_roles: Sequence[str],
+) -> dict[str, object]:
+    """Render one contextual semantic shape for prompt-only conformance."""
+
+    from copy import deepcopy
+
+    required = deepcopy(dict(DIRECTOR_TASK_SELECTION_SEMANTIC_SHAPE))
+    required["selected_step_number"] = (
+        f"<integer from {list(eligible_step_numbers)}>"
+    )
+    required["selected_input_numbers"] = [
+        f"<integer from {list(available_input_numbers)}>"
+    ]
+    required["capability"] = f"<one of {sorted(_allowed('capability'))}>"
+    required["participant_role"] = (
+        f"<one of {sorted(configured_participant_roles)}>"
+    )
+    required["action"] = (
+        f"<one of {sorted(_allowed('semantic_operation'))}>"
+    )
+    required["output_contract_kind"] = (
+        f"<one of {sorted(_allowed('output_contract_kind'))}>"
+    )
+    focus = dict(required["focus"])
+    focus["granularity"] = f"<one of {sorted(_allowed('granularity'))}>"
+    required["focus"] = focus
+    return required
 
 
 def assemble_director_task(
@@ -994,6 +1032,7 @@ def numbered_managed_inputs(
 def select_director_task(
     certified_plan: Mapping[str, object],
     *,
+    frozen_request: str,
     job_ref: str,
     model_caller: object = None,
     completed_step_refs: Sequence[str] = (),
@@ -1071,10 +1110,17 @@ def select_director_task(
         available_input_numbers=input_numbers,
         configured_participant_roles=configured_roles,
     )
+    required_output = director_task_selection_required_output(
+        eligible_step_numbers=candidate_numbers,
+        available_input_numbers=input_numbers,
+        configured_participant_roles=configured_roles,
+    )
     messages = render_director_task_selection_messages(
+        frozen_request=frozen_request,
         certified_plan=certified_plan,
         eligible_steps=candidates,
         available_inputs=input_catalog,
+        required_output=required_output,
         revision_evidence=revision_evidence,
     )
     caller = invoke_model_context if model_caller is None else model_caller
@@ -1173,7 +1219,7 @@ def select_director_task(
                     for item in input_catalog
                 ],
             },
-            required_output=DIRECTOR_TASK_SELECTION_SEMANTIC_SHAPE,
+            required_output=required_output,
         )
         repaired = call(
             f"{artifact_kind}_conformance_repair",
@@ -1596,17 +1642,20 @@ def _validate_director_guidance_semantics(
 
 def render_director_evaluation_messages(
     *,
+    frozen_request: str,
     certified_plan: Mapping[str, object],
     selected_step: Mapping[str, object],
     director_task: Mapping[str, object],
     task_execution: Mapping[str, object],
     numbered_evidence: Sequence[Mapping[str, object]],
     numbered_accepted_checkpoints: Sequence[Mapping[str, object]],
+    prior_executions: Sequence[Mapping[str, object]] = (),
     allow_ask_guidance: bool = False,
 ) -> tuple[dict[str, str], ...]:
     """Project only evidence needed for the Director judgment."""
 
     import json
+    from planning import semantic_plan_fidelity_policy
 
     plan_execution = task_execution["plan_execution"]
     assert isinstance(plan_execution, Mapping)
@@ -1615,11 +1664,22 @@ def render_director_evaluation_messages(
         required_output["decision"] = "<ACCEPT | REVISE>"
         required_output["guidance"] = None
     projection = {
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "certified_plan": {
             "plan_id": certified_plan["plan_id"],
             "revision_ref": certified_plan["revision_ref"],
             "goal": certified_plan["goal"],
+            "steps": certified_plan["steps"],
         },
+        "prior_execution_evidence": [
+            {
+                "execution_id": item["execution_id"],
+                "result": item["result"],
+                "outcomes": item["plan_execution"]["outcomes"],
+            }
+            for item in prior_executions
+        ],
         "selected_step": {
             "id": selected_step["id"],
             "action": selected_step["action"],
@@ -1657,6 +1717,25 @@ def render_director_evaluation_messages(
             dict(item) for item in numbered_accepted_checkpoints
         ],
         "required_output": required_output,
+        "conditional_field_rules": {
+            "ACCEPT": {
+                "backtrack_checkpoint_number": None,
+                "guidance": None,
+                "continue_work": "boolean",
+            },
+            "REVISE": {
+                "backtrack_checkpoint_number": "supplied checkpoint number",
+                "guidance": None,
+                "continue_work": True,
+            },
+            **({
+                "ASK_GUIDANCE": {
+                    "backtrack_checkpoint_number": None,
+                    "guidance": DIRECTOR_GUIDANCE_SEMANTIC_SHAPE,
+                    "continue_work": False,
+                },
+            } if allow_ask_guidance else {}),
+        },
     }
     return (
         {
@@ -1669,12 +1748,33 @@ def render_director_evaluation_messages(
                 "semantic work. REVISE is semantic, always requests a successor "
                 "Plan, and must select one supplied accepted checkpoint by "
                 "number. REVISE is not representation repair or transport retry. "
+                "Response conformance, useful evidence, selected-work fulfillment, "
+                "and overall-mandate fulfillment are distinct. ACCEPT requires "
+                "selected-work fulfillment under the original mandate. Set "
+                "continue_work=false on ACCEPT only when the overall original "
+                "mandate is fulfilled; intermediate step success alone is insufficient. "
+                "In reason explain what evidence establishes, what remains for the "
+                "mandate, and why continuation is authorized or needs guidance. "
+                "REVISE must stay within the original objective, constraints and "
+                "success criteria. If progress requires unauthorized relaxation, "
+                "seek guidance. A diagnostic mandate may accept a negative finding. "
                 + (
                     "ASK_GUIDANCE is available only for a material unresolved "
                     "hurdle, pauses without a successor, and requires the complete "
                     "guidance record. "
                     if allow_ask_guidance else
                     "ASK_GUIDANCE is unavailable because no persistence seam was supplied. "
+                )
+                +
+                "For ACCEPT, guidance and backtrack_checkpoint_number must "
+                "both be null. For REVISE, guidance must be null, "
+                "continue_work must be true, and backtrack_checkpoint_number "
+                "must select a supplied checkpoint. "
+                + (
+                    "For ASK_GUIDANCE, guidance must be the complete record, "
+                    "continue_work must be false, and "
+                    "backtrack_checkpoint_number must be null. "
+                    if allow_ask_guidance else ""
                 )
                 +
                 "Do not choose a model, context, endpoint, host, or fallback. "
@@ -1732,9 +1832,11 @@ def _task_execution_handoff_issues(
 def evaluate_task_execution(
     task_execution: Mapping[str, object],
     *,
+    frozen_request: str,
     certified_plan: Mapping[str, object],
     selected_step: Mapping[str, object],
     director_task: Mapping[str, object],
+    prior_executions: Sequence[Mapping[str, object]] = (),
     plan_history: Optional[Sequence[Mapping[str, object]]] = None,
     accepted_checkpoints: Optional[
         Sequence[Mapping[str, object]]
@@ -1894,6 +1996,10 @@ def evaluate_task_execution(
         "kind": "task_execution",
         "ref": task_execution["execution_id"],
     }]
+    numbered_evidence.extend(
+        {"number": index, "kind": "task_execution", "ref": item["execution_id"]}
+        for index, item in enumerate(prior_executions, start=2)
+    )
     evidence_refs_by_number = {
         int(item["number"]): str(item["ref"])
         for item in numbered_evidence
@@ -1931,6 +2037,8 @@ def evaluate_task_execution(
         allow_ask_guidance=allow_ask_guidance,
     )
     messages = render_director_evaluation_messages(
+        frozen_request=frozen_request,
+        prior_executions=prior_executions,
         certified_plan=certified_plan,
         selected_step=selected_step,
         director_task=director_task,
@@ -2023,6 +2131,26 @@ def evaluate_task_execution(
                 "execution_ref": task_execution["execution_id"],
                 "evidence": numbered_evidence,
                 "accepted_checkpoints": numbered_checkpoints,
+                "conditional_field_rules": {
+                    "ACCEPT": {
+                        "backtrack_checkpoint_number": None,
+                        "guidance": None,
+                    },
+                    "REVISE": {
+                        "backtrack_checkpoint_number": (
+                            "supplied checkpoint number"
+                        ),
+                        "guidance": None,
+                        "continue_work": True,
+                    },
+                    **({
+                        "ASK_GUIDANCE": {
+                            "backtrack_checkpoint_number": None,
+                            "guidance": "complete guidance record",
+                            "continue_work": False,
+                        },
+                    } if allow_ask_guidance else {}),
+                },
             },
             required_output={
                 **DIRECTOR_EVALUATION_SEMANTIC_SHAPE,
@@ -2221,6 +2349,7 @@ def _revision_evidence_projection(
 
 def request_successor_plan_semantics(
     *,
+    frozen_request: str,
     current_plan: Mapping[str, object],
     checkpoint_plan: Mapping[str, object],
     evaluated_execution: Mapping[str, object],
@@ -2243,6 +2372,7 @@ def request_successor_plan_semantics(
         render_conformance_repair_messages,
         successor_plan_response_format,
         validate_successor_plan_semantics,
+        semantic_plan_fidelity_policy,
     )
 
     limit = (
@@ -2271,6 +2401,8 @@ def request_successor_plan_semantics(
     }
     plan_execution = evaluated_execution["plan_execution"]
     projection = {
+        "frozen_request": frozen_request,
+        "semantic_plan_fidelity": semantic_plan_fidelity_policy(),
         "current_plan": {
             "plan_id": current_plan["plan_id"],
             "revision_ref": current_plan["revision_ref"],
@@ -2417,6 +2549,128 @@ def request_successor_plan_semantics(
     }
 
 
+def _accept_successor_plan(
+    *,
+    frozen_request: str,
+    plan_history: Sequence[Mapping[str, Any]],
+    checkpoint_revision_ref: str,
+    checkpoint_outcome_ref: Optional[str],
+    accepted_outcomes: Mapping[str, Mapping[str, Any]],
+    successor_semantics: Mapping[str, Any],
+    evaluated_execution: Mapping[str, Any],
+    outcome: Mapping[str, Any],
+    model_caller: object,
+    reasoning_task_count: int,
+    reasoning_task_limit: Optional[int],
+    timestamp: Optional[str],
+) -> Mapping[str, Any]:
+    """Apply the same Plan gate before a successor enters authoritative lineage."""
+    from copy import deepcopy
+    from config import DEFAULT_JOB_BUDGET, DIRECTOR_CONTEXT
+    from model_client import ModelResponse
+    from orchestrator import invoke_model_context, resolve_model_context
+    from planning import assemble_successor_plan, certify_final_plan, validate_successor_plan
+
+    caller = invoke_model_context if model_caller is None else model_caller
+    limit = DEFAULT_JOB_BUDGET["reasoning_tasks"] if reasoning_task_limit is None else reasoning_task_limit
+    calls: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
+    completions: list[dict[str, Any]] = []
+    assessments: list[dict[str, Any]] = []
+    corrections: list[dict[str, Any]] = []
+
+    def call(
+        stage: str, messages: tuple[dict[str, str], ...],
+        response_format: Mapping[str, Any], *, producer_context: str,
+    ) -> ModelResponse:
+        nonlocal reasoning_task_count
+        if reasoning_task_count >= limit:
+            raise RuntimeError("Reasoning-task budget exhausted.")
+        assignment = resolve_model_context(producer_context)
+        assert assignment.model is not None
+        reasoning_task_count += 1
+        selected_format = response_format if assignment.model.supports_json_schema else None
+        response = caller(
+            producer_context, messages, response_format=selected_format,
+            chat_template_kwargs=(
+                assignment.model.structured_output_chat_template_kwargs
+                if selected_format is not None else None
+            ),
+        )
+        if not isinstance(response, ModelResponse):
+            raise TypeError("Semantic Plan gate caller must return ModelResponse.")
+        calls.append({
+            "stage": stage, "logical_context": producer_context,
+            "model_name": assignment.model.model_name, "node": assignment.model.node,
+            "endpoint_url": assignment.model.endpoint_url, "request_id": response.request_id,
+            "reasoning_task": reasoning_task_count,
+            "messages": deepcopy(messages), "response_text": response.text,
+        })
+        return response
+
+    def assemble_candidate(
+        overall: Mapping[str, Any], steps: Mapping[str, Any], attempt: int,
+    ) -> dict[str, Any]:
+        candidate = assemble_successor_plan(
+            plan_history, checkpoint_revision_ref=checkpoint_revision_ref,
+            checkpoint_outcome_ref=checkpoint_outcome_ref,
+            accepted_outcomes_by_ref=accepted_outcomes,
+            successor_semantics={"overall_synthesis": overall, "plan_steps": steps},
+            triggering_execution_ref=evaluated_execution["execution_id"],
+            triggering_outcome_ref=outcome["id"], director_ref=DIRECTOR_CONTEXT,
+            timestamp=timestamp,
+        )
+        certified = certify_final_plan(candidate)
+        issues = validate_successor_plan(
+            certified, prior_plan_history=plan_history,
+            checkpoint_revision_ref=checkpoint_revision_ref,
+            checkpoint_outcome_ref=checkpoint_outcome_ref,
+            accepted_outcomes_by_ref=accepted_outcomes,
+            triggering_execution_ref=evaluated_execution["execution_id"],
+            triggering_outcome_ref=outcome["id"], director_ref=DIRECTOR_CONTEXT,
+        )
+        if issues:
+            raise ValueError("Invalid certified successor: " + "; ".join(i.message for i in issues))
+        return certified
+
+    result: dict[str, Any] = {}
+    try:
+        accepted = _accept_semantic_plan(
+            frozen_request=frozen_request,
+            overall_synthesis=successor_semantics["overall_synthesis"],
+            plan_steps=successor_semantics["plan_steps"],
+            assemble_candidate=assemble_candidate, call=call,
+            resolve_semantic_artifact=_planning_semantic_resolver(
+                call, repairs, completions, frozen_request=frozen_request,
+            ),
+            director_ref=DIRECTOR_CONTEXT,
+            semantic_iteration=DEFAULT_JOB_BUDGET["semantic_iterations"],
+            architecture_assessments=assessments,
+            semantic_boundary_corrections=corrections,
+            execution_context={
+                "triggering_execution": {
+                    "execution_id": evaluated_execution["execution_id"],
+                    "result": evaluated_execution["result"],
+                    "error": evaluated_execution["error"],
+                },
+                "triggering_outcome": deepcopy(outcome),
+                "checkpoint_revision_ref": checkpoint_revision_ref,
+                "checkpoint_outcome_ref": checkpoint_outcome_ref,
+            },
+        )
+        result["successor_plan"] = accepted["final_plan"]
+    except (ValueError, RuntimeError) as error:
+        # Keep the real execution/outcome and old lineage, without publishing
+        # the rejected candidate or inventing an ASK_GUIDANCE decision.
+        result["error"] = str(error)
+    result.update(
+        calls=calls, conformance_repairs=repairs, semantic_completions=completions,
+        semantic_plan_assessments=assessments, semantic_boundary_corrections=corrections,
+        reasoning_task_count=reasoning_task_count,
+    )
+    return result
+
+
 def run_iteration_3(
     certified_plan: Mapping[str, object],
     *,
@@ -2444,15 +2698,13 @@ def run_iteration_3(
     from orchestrator import (
         execute_managed_director_task,
         persist_managed_work_run,
+        resolve_original_request,
         validate_guidance_authorization,
     )
     from planning import (
-        assemble_successor_plan,
-        certify_final_plan,
         execution_transition_budget_state,
         root_checkpoint_evidence_refs,
         validate_planning_root_checkpoint,
-        validate_successor_plan,
     )
     from task_execution import (
         validate_task_execution_checkpoint_context,
@@ -2490,6 +2742,11 @@ def run_iteration_3(
     calls: list[dict[str, object]] = []
     repairs: list[dict[str, object]] = []
     tasks: list[dict[str, object]] = []
+    selections: list[dict[str, object]] = []
+    completions: list[dict[str, object]] = []
+    plan_assessments: list[dict[str, object]] = []
+    plan_corrections: list[dict[str, object]] = []
+    semantic_plan_error: str | None = None
     executions: list[dict[str, object]] = []
     evaluations: list[dict[str, object]] = []
     plan_history: list[dict[str, object]] = [
@@ -2503,6 +2760,8 @@ def run_iteration_3(
         raise ValueError(
             f"Iteration 3 requires a planning-certified @r1 root: {details}"
         )
+    resolved_inputs = deepcopy(dict(resolved_inputs))
+    frozen_request = resolve_original_request(plan_history[0], resolved_inputs)
     accepted_checkpoints: list[dict[str, object]] = [{
         "kind": "root",
         "revision_ref": plan_history[0]["revision_ref"],
@@ -2517,6 +2776,7 @@ def run_iteration_3(
         current_plan = plan_history[-1]
         selection = select_director_task(
             current_plan,
+            frozen_request=frozen_request,
             job_ref=job_ref,
             model_caller=model_caller,
             available_resources=available_resources,
@@ -2527,6 +2787,10 @@ def run_iteration_3(
         reasoning_task_count = selection["reasoning_task_count"]
         selected_step = selection["selected_step"]
         current_task = selection["director_task"]
+        selections.append({
+            "plan_ref": current_plan["revision_ref"],
+            "semantics": deepcopy(selection["selection_semantics"]),
+        })
         tasks.append(deepcopy(current_task))
         calls.extend(selection["calls"])
         repairs.extend(selection["conformance_repairs"])
@@ -2557,6 +2821,8 @@ def run_iteration_3(
 
         evaluation = evaluate_task_execution(
             execution_result["task_execution"],
+            frozen_request=frozen_request,
+            prior_executions=executions,
             certified_plan=current_plan,
             selected_step=selected_step,
             director_task=current_task,
@@ -2630,6 +2896,7 @@ def run_iteration_3(
             if plan["revision_ref"] == checkpoint_revision_ref
         )
         successor_request = request_successor_plan_semantics(
+            frozen_request=frozen_request,
             current_plan=current_plan,
             checkpoint_plan=checkpoint_plan,
             evaluated_execution=evaluated_execution,
@@ -2641,35 +2908,27 @@ def run_iteration_3(
         reasoning_task_count = successor_request["reasoning_task_count"]
         calls.extend(successor_request["calls"])
         repairs.extend(successor_request["conformance_repairs"])
-        successor_candidate = assemble_successor_plan(
-            plan_history,
+        acceptance = _accept_successor_plan(
+            frozen_request=frozen_request, plan_history=plan_history,
             checkpoint_revision_ref=checkpoint_revision_ref,
             checkpoint_outcome_ref=checkpoint_outcome_ref,
-            accepted_outcomes_by_ref=accepted_outcomes,
+            accepted_outcomes=accepted_outcomes,
             successor_semantics=successor_request["successor_semantics"],
-            triggering_execution_ref=evaluated_execution["execution_id"],
-            triggering_outcome_ref=outcome["id"],
-            director_ref=DIRECTOR_CONTEXT,
-            timestamp=timestamp,
+            evaluated_execution=evaluated_execution, outcome=outcome,
+            model_caller=model_caller, reasoning_task_count=reasoning_task_count,
+            reasoning_task_limit=reasoning_task_limit, timestamp=timestamp,
         )
-        successor = certify_final_plan(successor_candidate)
-        successor_issues = validate_successor_plan(
-            successor,
-            prior_plan_history=plan_history,
-            checkpoint_revision_ref=checkpoint_revision_ref,
-            checkpoint_outcome_ref=checkpoint_outcome_ref,
-            accepted_outcomes_by_ref=accepted_outcomes,
-            triggering_execution_ref=evaluated_execution["execution_id"],
-            triggering_outcome_ref=outcome["id"],
-            director_ref=DIRECTOR_CONTEXT,
-        )
-        if successor_issues:
-            details = "; ".join(
-                f"{item.field}: {item.message}" for item in successor_issues
-            )
-            raise ValueError(
-                f"Certified successor Plan is invalid: {details}"
-            )
+        reasoning_task_count = acceptance["reasoning_task_count"]
+        calls.extend(acceptance["calls"])
+        repairs.extend(acceptance["conformance_repairs"])
+        completions.extend(acceptance["semantic_completions"])
+        plan_assessments.extend(acceptance["semantic_plan_assessments"])
+        plan_corrections.extend(acceptance["semantic_boundary_corrections"])
+        if "error" in acceptance:
+            status = "semantic_plan_unresolved"
+            semantic_plan_error = acceptance["error"]
+            break
+        successor = acceptance["successor_plan"]
 
         outcome["resulting_plan_ref"] = successor["revision_ref"]
         evaluated_execution["plan_execution"]["persistence"][
@@ -2703,6 +2962,11 @@ def run_iteration_3(
         "certified_plan": deepcopy(plan_history[-1]),
         "plan_history": deepcopy(plan_history),
         "selected_step": deepcopy(dict(selected_step)),
+        "director_selections": selections,
+        "semantic_plan_assessments": plan_assessments,
+        "semantic_boundary_corrections": plan_corrections,
+        "semantic_completions": completions,
+        "semantic_plan_error": semantic_plan_error,
         "director_tasks": tasks,
         "task_executions": executions,
         "evaluations": evaluations,
@@ -2732,6 +2996,400 @@ def run_iteration_3(
     return result
 
 
+def _planning_semantic_resolver(
+    call: Callable[..., Any],
+    conformance_repairs: list[dict[str, Any]],
+    semantic_completions: list[dict[str, Any]],
+    *, frozen_request: str,
+) -> Callable[..., dict[str, Any]]:
+    """Share the existing bounded representation/completion mechanics."""
+    from model_client import ModelResponse
+    from planning import (
+        conformance_repair_policy, semantic_completion_policy,
+        render_conformance_repair_messages, render_semantic_completion_messages,
+        parse_json_object,
+    )
+    repair_attempts: dict[str, int] = {}
+    completion_attempts: dict[str, int] = {}
+
+    def request_conformance_repair(
+        *,
+        artifact_kind: str,
+        producer_context: str,
+        invalid_output: str,
+        validation_issues: tuple[ValidationIssue, ...],
+        valid_references: Mapping[str, object],
+        required_output: Mapping[str, object],
+        response_format: Mapping[str, object],
+    ) -> ModelResponse:
+        policy = conformance_repair_policy()
+        maximum = policy.get("maximum_attempts_per_artifact")
+        if maximum != 1:
+            raise RuntimeError(
+                "Iteration 2 supports exactly one conformance-repair attempt."
+            )
+        if (
+            policy.get("consumes_reasoning_task") is not True
+            or policy.get("advances_semantic_iteration") is not False
+            or policy.get("semantic_change_allowed") is not False
+        ):
+            raise RuntimeError("Unsupported conformance-repair policy.")
+        attempt = repair_attempts.get(artifact_kind, 0) + 1
+        if attempt > maximum:
+            raise ValueError(
+                f"{artifact_kind} exhausted its conformance-repair attempt."
+            )
+        repair_attempts[artifact_kind] = attempt
+        messages = render_conformance_repair_messages(
+            artifact_kind=artifact_kind,
+            invalid_output=invalid_output,
+            validation_issues=validation_issues,
+            valid_references=valid_references,
+            required_output=required_output,
+        )
+        response = call(
+            f"{artifact_kind}_conformance_repair",
+            messages,
+            response_format,
+            producer_context=producer_context,
+        )
+        conformance_repairs.append({
+            "artifact_kind": artifact_kind,
+            "attempt": attempt,
+            "producer_context": producer_context,
+            "invalid_output": invalid_output,
+            "validation_issues": [
+                {
+                    "field": issue.field,
+                    "code": issue.code,
+                    "message": issue.message,
+                }
+                for issue in validation_issues
+            ],
+            "repaired_output": response.text,
+        })
+        return response
+
+    def request_semantic_completion(
+        *,
+        artifact_kind: str,
+        producer_context: str,
+        incomplete_output: str,
+        missing_decisions: tuple[ValidationIssue, ...],
+        valid_references: Mapping[str, object],
+        required_output: Mapping[str, object],
+        response_format: Mapping[str, object],
+        semantic_context: Optional[Mapping[str, Any]],
+    ) -> ModelResponse:
+        policy = semantic_completion_policy()
+        maximum = policy.get("maximum_attempts_per_artifact")
+        if maximum != 1:
+            raise RuntimeError(
+                "Iteration 2 supports exactly one semantic-completion attempt."
+            )
+        if (
+            policy.get("consumes_reasoning_task") is not True
+            or policy.get("advances_semantic_iteration") is not False
+            or policy.get("same_semantic_producer") is not True
+            or policy.get("semantic_change_scope") != "missing_decisions_only"
+        ):
+            raise RuntimeError("Unsupported semantic-completion policy.")
+        attempt = completion_attempts.get(artifact_kind, 0) + 1
+        if attempt > maximum:
+            raise ValueError(
+                f"{artifact_kind} exhausted its semantic-completion attempt."
+            )
+        completion_attempts[artifact_kind] = attempt
+        messages = render_semantic_completion_messages(
+            frozen_request=frozen_request,
+            semantic_context=semantic_context,
+            artifact_kind=artifact_kind,
+            incomplete_output=incomplete_output,
+            missing_decisions=missing_decisions,
+            valid_references=valid_references,
+            required_output=required_output,
+        )
+        response = call(
+            f"{artifact_kind}_semantic_completion",
+            messages,
+            response_format,
+            producer_context=producer_context,
+        )
+        semantic_completions.append({
+            "artifact_kind": artifact_kind,
+            "attempt": attempt,
+            "producer_context": producer_context,
+            "incomplete_output": incomplete_output,
+            "missing_semantic_decisions": [
+                {
+                    "field": issue.field,
+                    "code": issue.code,
+                    "message": issue.message,
+                }
+                for issue in missing_decisions
+            ],
+            "completed_output": response.text,
+        })
+        return response
+
+    def resolve_semantic_artifact(
+        *,
+        artifact_kind: str,
+        producer_context: str,
+        initial_response: ModelResponse,
+        valid_references: Mapping[str, object],
+        required_output: Mapping[str, object],
+        response_format: Mapping[str, object],
+        validator: object,
+        semantic_context: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        current_output = initial_response.text
+        while True:
+            try:
+                semantics = parse_json_object(
+                    current_output,
+                    stage=artifact_kind.replace("_", " ").title(),
+                )
+                issues = validator(semantics)
+            except ValueError as exc:
+                semantics = None
+                issues = (ValidationIssue(
+                    field=artifact_kind,
+                    code="invalid_shape",
+                    message=str(exc),
+                ),)
+            missing = tuple(
+                issue
+                for issue in issues
+                if issue.code == "missing_semantic_decision"
+            )
+            conformance = tuple(
+                issue
+                for issue in issues
+                if issue.code != "missing_semantic_decision"
+            )
+            if conformance:
+                if repair_attempts.get(artifact_kind, 0) >= 1:
+                    details = "; ".join(
+                        f"{issue.field}: {issue.message}"
+                        for issue in conformance
+                    )
+                    raise ValueError(
+                        f"{artifact_kind} remains invalid after one "
+                        f"conformance repair: {details}"
+                    )
+                current_output = request_conformance_repair(
+                    artifact_kind=artifact_kind,
+                    producer_context=producer_context,
+                    invalid_output=current_output,
+                    validation_issues=conformance,
+                    valid_references=valid_references,
+                    required_output=required_output,
+                    response_format=response_format,
+                ).text
+                continue
+            if missing:
+                if completion_attempts.get(artifact_kind, 0) >= 1:
+                    details = "; ".join(
+                        f"{issue.field}: {issue.message}"
+                        for issue in missing
+                    )
+                    raise ValueError(
+                        f"{artifact_kind} remains incomplete after one "
+                        f"semantic completion: {details}"
+                    )
+                current_output = request_semantic_completion(
+                    artifact_kind=artifact_kind,
+                    producer_context=producer_context,
+                    incomplete_output=current_output,
+                    missing_decisions=missing,
+                    valid_references=valid_references,
+                    required_output=required_output,
+                    response_format=response_format,
+                    semantic_context=semantic_context,
+                ).text
+                continue
+            assert semantics is not None
+            return semantics
+
+    return resolve_semantic_artifact
+
+
+def _accept_semantic_plan(
+    *,
+    frozen_request: str,
+    overall_synthesis: Mapping[str, Any],
+    plan_steps: Mapping[str, Any],
+    assemble_candidate: Callable[..., dict[str, Any]],
+    call: Callable[..., Any],
+    resolve_semantic_artifact: Callable[..., dict[str, Any]],
+    director_ref: str,
+    semantic_iteration: int,
+    architecture_assessments: list[dict[str, Any]],
+    semantic_boundary_corrections: list[dict[str, Any]],
+    execution_context: Optional[Mapping[str, Any]] = None,
+) -> Mapping[str, Any]:
+    """One shared advisory Plan gate and one same-Director semantic correction."""
+    from copy import deepcopy
+    from config import NORMAL_PLANNING_CONTEXTS
+    from planning import (
+        ARCHITECTURE_ASSESSMENT_SEMANTIC_SHAPE, SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
+        FROZEN_ARCHITECTURE_INVARIANTS,
+        architecture_assessment_response_format, semantic_boundary_correction_response_format,
+        semantic_architecture_acceptance_policy, semantic_boundary_correction_policy,
+        render_architecture_assessment_messages, render_semantic_boundary_correction_messages,
+        validate_architecture_assessment_semantics, validate_semantic_boundary_correction_semantics,
+    )
+    acceptance_policy = semantic_architecture_acceptance_policy()
+    if (
+        acceptance_policy.get("requires_structural_certification") is not True
+        or acceptance_policy.get("assessor_has_decision_authority") is not False
+        or acceptance_policy.get("advances_semantic_iteration") is not False
+        or acceptance_policy.get("acceptance_requires_compliant") is not True
+        or acceptance_policy.get("concerns") != ["architecture_fidelity", "original_mandate_fidelity"]
+    ):
+        raise RuntimeError("Unsupported semantic Plan acceptance policy.")
+    assessor_context = NORMAL_PLANNING_CONTEXTS["architecture_assessment"]
+
+    def assess_architecture(
+        plan: Mapping[str, Any],
+        *,
+        assessment_attempt: int,
+    ) -> dict[str, Any]:
+        response = call(
+            (
+                "architecture_assessment"
+                if assessment_attempt == 1
+                else "architecture_reassessment"
+            ),
+            render_architecture_assessment_messages(
+                frozen_request=frozen_request, candidate_plan=plan,
+                execution_context=execution_context,
+            ),
+            architecture_assessment_response_format(),
+            producer_context=assessor_context,
+        )
+        semantics = resolve_semantic_artifact(
+            artifact_kind=f"architecture_assessment_{assessment_attempt}",
+            producer_context=assessor_context,
+            initial_response=response,
+            valid_references={
+                "plan_id": plan["plan_id"],
+                "revision_ref": plan["revision_ref"],
+                "step_ids": [step["id"] for step in plan["steps"]],
+            },
+            required_output=ARCHITECTURE_ASSESSMENT_SEMANTIC_SHAPE,
+            response_format=architecture_assessment_response_format(),
+            validator=validate_architecture_assessment_semantics,
+            semantic_context={
+                "candidate_plan": deepcopy(plan),
+                "frozen_architecture_invariants": list(FROZEN_ARCHITECTURE_INVARIANTS),
+                "execution_context": deepcopy(execution_context),
+            },
+        )
+        record = {
+            "id": (
+                f"{selected_plan_id}:architecture-assessment-"
+                f"{assessment_attempt}"
+            ),
+            "iteration": semantic_iteration,
+            "assessor_ref": assessor_context,
+            "candidate_revision_ref": plan["revision_ref"],
+            "compliant": semantics["compliant"],
+            "violations": deepcopy(semantics["violations"]),
+        }
+        architecture_assessments.append(record)
+        return semantics
+
+    initial_candidate_plan = assemble_candidate(overall_synthesis, plan_steps, 1)
+    selected_plan_id = (
+        initial_candidate_plan["plan_id"] if initial_candidate_plan["revision"] == 1
+        else initial_candidate_plan["revision_ref"]
+    )
+    architecture_assessment = assess_architecture(
+        initial_candidate_plan,
+        assessment_attempt=1,
+    )
+    if architecture_assessment["compliant"]:
+        final_plan = initial_candidate_plan
+    else:
+        correction_policy = semantic_boundary_correction_policy()
+        if (
+            correction_policy.get("maximum_attempts_per_plan") != 1
+            or correction_policy.get("consumes_reasoning_task") is not True
+            or correction_policy.get("advances_semantic_iteration") is not False
+            or correction_policy.get("same_director") is not True
+            or correction_policy.get("semantic_change_scope")
+            != "identified_architecture_or_request_fidelity_violations_only"
+        ):
+            raise RuntimeError("Unsupported semantic boundary correction policy.")
+        correction_response = call(
+            "director_semantic_boundary_correction",
+            render_semantic_boundary_correction_messages(
+                frozen_request=frozen_request,
+                candidate_plan=initial_candidate_plan,
+                execution_context=execution_context,
+                architecture_violations=architecture_assessment[
+                    "violations"
+                ],
+                overall_synthesis=overall_synthesis,
+                plan_steps=plan_steps,
+            ),
+            semantic_boundary_correction_response_format(),
+            producer_context=director_ref,
+        )
+        corrected_semantics = resolve_semantic_artifact(
+            artifact_kind="director_semantic_boundary_correction",
+            producer_context=director_ref,
+            initial_response=correction_response,
+            valid_references={
+                "plan_id": initial_candidate_plan["plan_id"],
+                "revision_ref": initial_candidate_plan["revision_ref"],
+                "step_ids": [
+                    step["id"] for step in initial_candidate_plan["steps"]
+                ],
+            },
+            required_output=SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
+            response_format=semantic_boundary_correction_response_format(),
+            validator=validate_semantic_boundary_correction_semantics,
+            semantic_context={
+                "candidate_plan": deepcopy(initial_candidate_plan),
+                "frozen_architecture_invariants": list(FROZEN_ARCHITECTURE_INVARIANTS),
+                "execution_context": deepcopy(execution_context),
+                "identified_violations": deepcopy(architecture_assessment["violations"]),
+                "current_overall_synthesis": deepcopy(overall_synthesis),
+                "current_plan_steps": deepcopy(plan_steps),
+            },
+        )
+        semantic_boundary_corrections.append({
+            "attempt": 1,
+            "producer_context": director_ref,
+            "violations": deepcopy(architecture_assessment["violations"]),
+            "corrected_semantics": deepcopy(corrected_semantics),
+        })
+        overall_synthesis = corrected_semantics["overall_synthesis"]
+        plan_steps = corrected_semantics["plan_steps"]
+        corrected_candidate_plan = assemble_candidate(overall_synthesis, plan_steps, 2)
+        second_assessment = assess_architecture(
+            corrected_candidate_plan,
+            assessment_attempt=2,
+        )
+        if not second_assessment["compliant"]:
+            details = "; ".join(
+                violation["finding"]
+                for violation in second_assessment["violations"]
+            )
+            raise ValueError(
+                "Corrected Plan remains semantically noncompliant after one "
+                f"boundary correction: {details}"
+            )
+        final_plan = corrected_candidate_plan
+    return {
+        "initial_candidate_plan": initial_candidate_plan, "final_plan": final_plan,
+        "overall_synthesis": overall_synthesis, "plan_steps": plan_steps,
+    }
+
+
 def run_normal_planning(
     frozen_request: str,
     *,
@@ -2755,38 +3413,25 @@ def run_normal_planning(
     from model_client import ModelResponse
     from orchestrator import invoke_model_context, resolve_model_context
     from planning import (
-        ARCHITECTURE_ASSESSMENT_SEMANTIC_SHAPE,
         CHANGE_DISPOSITION_SEMANTIC_SHAPE,
         OVERALL_SYNTHESIS_SEMANTIC_SHAPE,
         PLAN_STEPS_SEMANTIC_SHAPE,
-        SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
         assemble_assessment,
         assemble_final_plan,
         assemble_proposal,
-        architecture_assessment_response_format,
         assessment_response_format,
         certify_final_plan,
         change_disposition_response_format,
         combine_synthesis_semantics,
-        conformance_repair_policy,
         overall_synthesis_response_format,
         parse_json_object,
         plan_steps_response_format,
         proposal_response_format,
-        render_architecture_assessment_messages,
         render_assessment_messages,
         render_change_disposition_messages,
-        render_conformance_repair_messages,
         render_overall_synthesis_messages,
         render_plan_steps_messages,
         render_proposal_messages,
-        render_semantic_boundary_correction_messages,
-        render_semantic_completion_messages,
-        semantic_architecture_acceptance_policy,
-        semantic_boundary_correction_policy,
-        semantic_boundary_correction_response_format,
-        semantic_completion_policy,
-        validate_architecture_assessment_semantics,
         validate_assessment,
         validate_assessment_semantics,
         validate_change_disposition_semantics,
@@ -2794,7 +3439,6 @@ def run_normal_planning(
         validate_overall_synthesis_semantics,
         validate_plan_steps_semantics,
         validate_proposal,
-        validate_semantic_boundary_correction_semantics,
         validate_proposal_semantics,
     )
 
@@ -2833,8 +3477,6 @@ def run_normal_planning(
     architecture_assessments: list[dict[str, object]] = []
     semantic_boundary_corrections: list[dict[str, object]] = []
     structural_certifications: list[dict[str, object]] = []
-    repair_attempts: dict[str, int] = {}
-    completion_attempts: dict[str, int] = {}
 
     def call(
         stage: str,
@@ -2905,200 +3547,9 @@ def run_normal_planning(
         })
         return response
 
-    def request_conformance_repair(
-        *,
-        artifact_kind: str,
-        producer_context: str,
-        invalid_output: str,
-        validation_issues: tuple[ValidationIssue, ...],
-        valid_references: Mapping[str, object],
-        required_output: Mapping[str, object],
-        response_format: Mapping[str, object],
-    ) -> ModelResponse:
-        policy = conformance_repair_policy()
-        maximum = policy.get("maximum_attempts_per_artifact")
-        if maximum != 1:
-            raise RuntimeError(
-                "Iteration 2 supports exactly one conformance-repair attempt."
-            )
-        if (
-            policy.get("consumes_reasoning_task") is not True
-            or policy.get("advances_semantic_iteration") is not False
-            or policy.get("semantic_change_allowed") is not False
-        ):
-            raise RuntimeError("Unsupported conformance-repair policy.")
-        attempt = repair_attempts.get(artifact_kind, 0) + 1
-        if attempt > maximum:
-            raise ValueError(
-                f"{artifact_kind} exhausted its conformance-repair attempt."
-            )
-        repair_attempts[artifact_kind] = attempt
-        messages = render_conformance_repair_messages(
-            artifact_kind=artifact_kind,
-            invalid_output=invalid_output,
-            validation_issues=validation_issues,
-            valid_references=valid_references,
-            required_output=required_output,
-        )
-        response = call(
-            f"{artifact_kind}_conformance_repair",
-            messages,
-            response_format,
-            producer_context=producer_context,
-        )
-        conformance_repairs.append({
-            "artifact_kind": artifact_kind,
-            "attempt": attempt,
-            "producer_context": producer_context,
-            "invalid_output": invalid_output,
-            "validation_issues": [
-                {
-                    "field": issue.field,
-                    "code": issue.code,
-                    "message": issue.message,
-                }
-                for issue in validation_issues
-            ],
-            "repaired_output": response.text,
-        })
-        return response
-
-    def request_semantic_completion(
-        *,
-        artifact_kind: str,
-        producer_context: str,
-        incomplete_output: str,
-        missing_decisions: tuple[ValidationIssue, ...],
-        valid_references: Mapping[str, object],
-        required_output: Mapping[str, object],
-        response_format: Mapping[str, object],
-    ) -> ModelResponse:
-        policy = semantic_completion_policy()
-        maximum = policy.get("maximum_attempts_per_artifact")
-        if maximum != 1:
-            raise RuntimeError(
-                "Iteration 2 supports exactly one semantic-completion attempt."
-            )
-        if (
-            policy.get("consumes_reasoning_task") is not True
-            or policy.get("advances_semantic_iteration") is not False
-            or policy.get("same_semantic_producer") is not True
-            or policy.get("semantic_change_scope") != "missing_decisions_only"
-        ):
-            raise RuntimeError("Unsupported semantic-completion policy.")
-        attempt = completion_attempts.get(artifact_kind, 0) + 1
-        if attempt > maximum:
-            raise ValueError(
-                f"{artifact_kind} exhausted its semantic-completion attempt."
-            )
-        completion_attempts[artifact_kind] = attempt
-        messages = render_semantic_completion_messages(
-            artifact_kind=artifact_kind,
-            incomplete_output=incomplete_output,
-            missing_decisions=missing_decisions,
-            valid_references=valid_references,
-            required_output=required_output,
-        )
-        response = call(
-            f"{artifact_kind}_semantic_completion",
-            messages,
-            response_format,
-            producer_context=producer_context,
-        )
-        semantic_completions.append({
-            "artifact_kind": artifact_kind,
-            "attempt": attempt,
-            "producer_context": producer_context,
-            "incomplete_output": incomplete_output,
-            "missing_semantic_decisions": [
-                {
-                    "field": issue.field,
-                    "code": issue.code,
-                    "message": issue.message,
-                }
-                for issue in missing_decisions
-            ],
-            "completed_output": response.text,
-        })
-        return response
-
-    def resolve_semantic_artifact(
-        *,
-        artifact_kind: str,
-        producer_context: str,
-        initial_response: ModelResponse,
-        valid_references: Mapping[str, object],
-        required_output: Mapping[str, object],
-        response_format: Mapping[str, object],
-        validator: object,
-    ) -> dict[str, Any]:
-        current_output = initial_response.text
-        while True:
-            try:
-                semantics = parse_json_object(
-                    current_output,
-                    stage=artifact_kind.replace("_", " ").title(),
-                )
-                issues = validator(semantics)
-            except ValueError as exc:
-                semantics = None
-                issues = (ValidationIssue(
-                    field=artifact_kind,
-                    code="invalid_shape",
-                    message=str(exc),
-                ),)
-            missing = tuple(
-                issue
-                for issue in issues
-                if issue.code == "missing_semantic_decision"
-            )
-            conformance = tuple(
-                issue
-                for issue in issues
-                if issue.code != "missing_semantic_decision"
-            )
-            if conformance:
-                if repair_attempts.get(artifact_kind, 0) >= 1:
-                    details = "; ".join(
-                        f"{issue.field}: {issue.message}"
-                        for issue in conformance
-                    )
-                    raise ValueError(
-                        f"{artifact_kind} remains invalid after one "
-                        f"conformance repair: {details}"
-                    )
-                current_output = request_conformance_repair(
-                    artifact_kind=artifact_kind,
-                    producer_context=producer_context,
-                    invalid_output=current_output,
-                    validation_issues=conformance,
-                    valid_references=valid_references,
-                    required_output=required_output,
-                    response_format=response_format,
-                ).text
-                continue
-            if missing:
-                if completion_attempts.get(artifact_kind, 0) >= 1:
-                    details = "; ".join(
-                        f"{issue.field}: {issue.message}"
-                        for issue in missing
-                    )
-                    raise ValueError(
-                        f"{artifact_kind} remains incomplete after one "
-                        f"semantic completion: {details}"
-                    )
-                current_output = request_semantic_completion(
-                    artifact_kind=artifact_kind,
-                    producer_context=producer_context,
-                    incomplete_output=current_output,
-                    missing_decisions=missing,
-                    valid_references=valid_references,
-                    required_output=required_output,
-                    response_format=response_format,
-                ).text
-                continue
-            assert semantics is not None
-            return semantics
+    resolve_semantic_artifact = _planning_semantic_resolver(
+        call, conformance_repairs, semantic_completions, frozen_request=frozen_request,
+    )
 
     def advance(event: str) -> None:
         nonlocal semantic_iterations
@@ -3376,139 +3827,33 @@ def run_normal_planning(
         })
         return certified
 
-    acceptance_policy = semantic_architecture_acceptance_policy()
-    if (
-        acceptance_policy.get("requires_structural_certification") is not True
-        or acceptance_policy.get("assessor_has_decision_authority") is not False
-        or acceptance_policy.get("advances_semantic_iteration") is not False
-        or acceptance_policy.get("acceptance_requires_compliant") is not True
-    ):
-        raise RuntimeError("Unsupported semantic architecture acceptance policy.")
-    assessor_context = NORMAL_PLANNING_CONTEXTS["architecture_assessment"]
-
-    def assess_architecture(
-        plan: Mapping[str, Any],
-        *,
-        assessment_attempt: int,
+    def assemble_candidate(
+        overall: Mapping[str, Any], steps: Mapping[str, Any], attempt: int,
     ) -> dict[str, Any]:
-        response = call(
-            (
-                "architecture_assessment"
-                if assessment_attempt == 1
-                else "architecture_reassessment"
+        return structurally_certify_plan(
+            combine_synthesis_semantics(
+                change_dispositions, overall, steps,
+                suggested_change_count=suggested_change_count,
             ),
-            render_architecture_assessment_messages(candidate_plan=plan),
-            architecture_assessment_response_format(),
-            producer_context=assessor_context,
+            certification_attempt=attempt,
         )
-        semantics = resolve_semantic_artifact(
-            artifact_kind=f"architecture_assessment_{assessment_attempt}",
-            producer_context=assessor_context,
-            initial_response=response,
-            valid_references={
-                "plan_id": plan["plan_id"],
-                "revision_ref": plan["revision_ref"],
-                "step_ids": [step["id"] for step in plan["steps"]],
-            },
-            required_output=ARCHITECTURE_ASSESSMENT_SEMANTIC_SHAPE,
-            response_format=architecture_assessment_response_format(),
-            validator=validate_architecture_assessment_semantics,
-        )
-        record = {
-            "id": (
-                f"{selected_plan_id}:architecture-assessment-"
-                f"{assessment_attempt}"
-            ),
-            "iteration": 2,
-            "assessor_ref": assessor_context,
-            "candidate_revision_ref": plan["revision_ref"],
-            "compliant": semantics["compliant"],
-            "violations": deepcopy(semantics["violations"]),
-        }
-        architecture_assessments.append(record)
-        return semantics
 
-    initial_candidate_plan = structurally_certify_plan(
-        synthesis_semantics,
-        certification_attempt=1,
+    acceptance = _accept_semantic_plan(
+        frozen_request=frozen_request, overall_synthesis=overall_synthesis,
+        plan_steps=plan_steps, assemble_candidate=assemble_candidate,
+        call=call, resolve_semantic_artifact=resolve_semantic_artifact,
+        director_ref=director_ref, semantic_iteration=semantic_iterations,
+        architecture_assessments=architecture_assessments,
+        semantic_boundary_corrections=semantic_boundary_corrections,
     )
-    architecture_assessment = assess_architecture(
-        initial_candidate_plan,
-        assessment_attempt=1,
+    initial_candidate_plan = acceptance["initial_candidate_plan"]
+    final_plan = acceptance["final_plan"]
+    overall_synthesis = acceptance["overall_synthesis"]
+    plan_steps = acceptance["plan_steps"]
+    synthesis_semantics = combine_synthesis_semantics(
+        change_dispositions, overall_synthesis, plan_steps,
+        suggested_change_count=suggested_change_count,
     )
-    if architecture_assessment["compliant"]:
-        final_plan = initial_candidate_plan
-    else:
-        correction_policy = semantic_boundary_correction_policy()
-        if (
-            correction_policy.get("maximum_attempts_per_plan") != 1
-            or correction_policy.get("consumes_reasoning_task") is not True
-            or correction_policy.get("advances_semantic_iteration") is not False
-            or correction_policy.get("same_director") is not True
-            or correction_policy.get("semantic_change_scope")
-            != "identified_architecture_violations_only"
-        ):
-            raise RuntimeError("Unsupported semantic boundary correction policy.")
-        correction_response = call(
-            "director_semantic_boundary_correction",
-            render_semantic_boundary_correction_messages(
-                candidate_plan=initial_candidate_plan,
-                architecture_violations=architecture_assessment[
-                    "violations"
-                ],
-                overall_synthesis=overall_synthesis,
-                plan_steps=plan_steps,
-            ),
-            semantic_boundary_correction_response_format(),
-            producer_context=director_ref,
-        )
-        corrected_semantics = resolve_semantic_artifact(
-            artifact_kind="director_semantic_boundary_correction",
-            producer_context=director_ref,
-            initial_response=correction_response,
-            valid_references={
-                "plan_id": initial_candidate_plan["plan_id"],
-                "revision_ref": initial_candidate_plan["revision_ref"],
-                "step_ids": [
-                    step["id"] for step in initial_candidate_plan["steps"]
-                ],
-            },
-            required_output=SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
-            response_format=semantic_boundary_correction_response_format(),
-            validator=validate_semantic_boundary_correction_semantics,
-        )
-        semantic_boundary_corrections.append({
-            "attempt": 1,
-            "producer_context": director_ref,
-            "violations": deepcopy(architecture_assessment["violations"]),
-            "corrected_semantics": deepcopy(corrected_semantics),
-        })
-        overall_synthesis = corrected_semantics["overall_synthesis"]
-        plan_steps = corrected_semantics["plan_steps"]
-        synthesis_semantics = combine_synthesis_semantics(
-            change_dispositions,
-            overall_synthesis,
-            plan_steps,
-            suggested_change_count=suggested_change_count,
-        )
-        corrected_candidate_plan = structurally_certify_plan(
-            synthesis_semantics,
-            certification_attempt=2,
-        )
-        second_assessment = assess_architecture(
-            corrected_candidate_plan,
-            assessment_attempt=2,
-        )
-        if not second_assessment["compliant"]:
-            details = "; ".join(
-                violation["finding"]
-                for violation in second_assessment["violations"]
-            )
-            raise ValueError(
-                "Corrected Plan remains semantically noncompliant after one "
-                f"boundary correction: {details}"
-            )
-        final_plan = corrected_candidate_plan
     advance("validated_final_plan")
 
     return {

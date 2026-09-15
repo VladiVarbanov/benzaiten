@@ -38,6 +38,7 @@ from planning import (
     render_conformance_repair_messages,
     render_proposal_messages,
     render_semantic_completion_messages,
+    semantic_plan_fidelity_policy,
     validate_architecture_assessment_semantics,
     validate_assessment_semantics,
     validate_change_disposition_semantics,
@@ -1084,6 +1085,89 @@ def test_second_semantic_boundary_failure_stops_after_one_correction() -> None:
     assert caller.calls[7][0] == NORMAL_PLANNING_CONTEXTS[
         "director_synthesis"
     ]
+
+
+@pytest.mark.parametrize("diagnostic", [False, True])
+def test_mandate_policy_reaches_all_planning_calls(diagnostic: bool) -> None:
+    request = (
+        "Determine whether the execution-time constraints are feasible."
+        if diagnostic else
+        "Produce a feasible configuration. Report impossibility truthfully, "
+        "but an impossibility report is not alternative fulfillment. "
+        "Detailed authoritative constraints are deferred until execution."
+    )
+    steps = plan_steps_semantics()
+    steps["steps"][0]["instructions"] = ["Read the execution-time evidence."]
+    steps["steps"][0]["expected_result"] = (
+        "A sound feasibility finding, including a proof of impossibility."
+        if diagnostic else "A feasible configuration with validation."
+    )
+    steps["steps"][0]["validation"] = ["Meet the original request."]
+    overall = overall_synthesis_semantics()
+    overall["unresolved_risks"] = ["Constraints are supplied at execution."]
+    caller = CapturingCaller(
+        assessment_outputs=[assessment_with_change("Qwen"), assessment_semantics("Gemma")],
+        director_outputs=[
+            change_disposition_semantics((1, "accepted")), overall, steps,
+            architecture_assessment_semantics(),
+        ],
+    )
+    trace = run_normal_planning(request, model_caller=caller)
+    for _, messages in caller.calls:
+        payload = json.loads(messages[1]["content"])
+        assert payload["frozen_request"] == request
+        policy = payload.get("semantic_plan_fidelity")
+        if policy is None:
+            policy = payload["normal_policy"]["semantic_plan_fidelity"]
+        assert policy == semantic_plan_fidelity_policy()
+    assert trace["final_plan"]["steps"][0]["expected_result"] == steps["steps"][0]["expected_result"]
+    assert trace["final_plan"]["final"]["unresolved_risks"] == overall["unresolved_risks"]
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_request_fidelity_uses_bounded_semantic_correction(corrected: bool) -> None:
+    request = (
+        "Produce a feasible configuration and validation. An incompatibility "
+        "report is useful evidence, not alternative fulfillment."
+    )
+    bad = plan_steps_semantics()
+    bad["steps"][0].update(
+        instructions=["Report incompatibility truthfully; never fabricate a solution."],
+        expected_result="A configuration OR an incompatibility report.",
+        validation=["Either output is success."],
+    )
+    good = deepcopy(bad)
+    good["steps"][0].update(
+        expected_result="A feasible configuration plus a validation record.",
+        validation=["Configuration satisfies every requirement."],
+    )
+    violation = architecture_violation(
+        "The request excludes an incompatibility report as fulfillment; "
+        "steps[0].expected_result and validation allow that alternative.",
+        "steps[0].expected_result",
+    )
+    negative = architecture_assessment_semantics(compliant=False, violations=[violation])
+    caller = CapturingCaller(director_outputs=[
+        overall_synthesis_semantics(), bad, negative,
+        boundary_correction_semantics(steps=good),
+        architecture_assessment_semantics() if corrected else negative,
+    ])
+    if corrected:
+        trace = run_normal_planning(request, model_caller=caller)
+        assert trace["final_plan"]["steps"][0]["expected_result"] == good["steps"][0]["expected_result"]
+        assert trace["final_plan"]["steps"][0]["instructions"] == bad["steps"][0]["instructions"]
+        assert trace["initial_candidate_plan"]["steps"][0]["expected_result"] == bad["steps"][0]["expected_result"]
+        assert len(trace["semantic_boundary_corrections"]) == 1
+        assert trace["conformance_repairs"] == []
+        assert trace["semantic_iteration_count"] == 3
+    else:
+        with pytest.raises(ValueError, match="request excludes an incompatibility"):
+            run_normal_planning(request, model_caller=caller)
+    for index in (6, 7, 8):
+        payload = json.loads(caller.calls[index][1][1]["content"])
+        assert payload["frozen_request"] == request
+        assert payload["semantic_plan_fidelity"] == semantic_plan_fidelity_policy()
+    assert len(caller.calls) == 9
 
 
 def test_final_plan_rejects_invalid_dependency() -> None:
