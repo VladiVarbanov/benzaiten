@@ -2,12 +2,12 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Benzaiten Managed Work — CURRENT after Iteration 2",
+    "title": "Benzaiten Managed Work — CURRENT after Iteration 3",
     "locale": "en",
     "quality_profile": "showcase",
     "viewBox": [
       1240,
-      900
+      650
     ],
     "views": [
       {
@@ -39,28 +39,39 @@
         "note": "A candidate becomes final only after deterministic protocol certification and configured semantic architecture acceptance."
       },
       {
+        "id": "managed_runtime",
+        "label": "Managed execution",
+        "focus": [
+          "director",
+          "final_plan",
+          "director_task",
+          "task_executive",
+          "task_execution"
+        ],
+        "note": "Director selects work and judges ACCEPT, REVISE, or ASK_GUIDANCE; passive records carry evidence through execution and resume."
+      },
+      {
         "id": "authority_split",
         "label": "Authority split",
         "focus": [
           "director",
-          "candidate_plan",
-          "architecture_gate",
           "final_plan",
-          "future_execution_seam"
+          "director_task",
+          "task_executive",
+          "task_execution"
         ],
-        "note": "Director owns meaning, Python owns protocol structure, Plan stays passive, and Task Executive remains outside Iteration 2."
+        "note": "Director owns meaning; Python owns trusted identity, validation, budgets, persistence, configured resolution, and user authorization."
       },
       {
-        "id": "configured_routing",
-        "label": "Configured model calls",
+        "id": "revision_graph",
+        "label": "Revision graph",
         "focus": [
-          "configured_transport",
-          "gemma_branch",
-          "qwen_branch",
           "director",
-          "architecture_gate"
+          "director_task",
+          "task_executive",
+          "task_execution"
         ],
-        "note": "Capability metadata selects structured-output behavior; logical-context configuration selects every semantic caller."
+        "note": "Each post-root revision consumes one transition and may descend from the certified root or an execution-accepted checkpoint."
       }
     ]
   },
@@ -73,7 +84,7 @@
       "tag": "immutable request",
       "pos": [
         20,
-        210
+        130
       ],
       "size": [
         220,
@@ -88,7 +99,7 @@
       "tag": "gemma_worker",
       "pos": [
         260,
-        70
+        30
       ],
       "size": [
         220,
@@ -103,7 +114,7 @@
       "tag": "qwen_worker",
       "pos": [
         260,
-        350
+        250
       ],
       "size": [
         220,
@@ -118,7 +129,7 @@
       "tag": "critiques + changes",
       "pos": [
         510,
-        210
+        130
       ],
       "size": [
         220,
@@ -128,12 +139,12 @@
     {
       "id": "director",
       "type": "backend",
-      "label": "Gemma Director synthesis",
-      "sublabel": "dispositions · synthesis · steps",
+      "label": "Gemma Director",
+      "sublabel": "synthesizes · selects · judges",
       "tag": "semantic authority",
       "pos": [
         760,
-        210
+        130
       ],
       "size": [
         220,
@@ -148,7 +159,7 @@
       "tag": "trusted bookkeeping",
       "pos": [
         1005,
-        210
+        130
       ],
       "size": [
         220,
@@ -163,7 +174,7 @@
       "tag": "Python authority",
       "pos": [
         1005,
-        375
+        270
       ],
       "size": [
         220,
@@ -178,7 +189,7 @@
       "tag": "advisory · correction max 1",
       "pos": [
         1005,
-        540
+        400
       ],
       "size": [
         220,
@@ -189,11 +200,11 @@
       "id": "final_plan",
       "type": "database",
       "label": "Final certified passive Plan",
-      "sublabel": "protocol valid · semantics accepted",
-      "tag": "iteration 3",
+      "sublabel": "immutable r1…rN semantic states",
+      "tag": "planning root + successor lineage",
       "pos": [
         1005,
-        705
+        535
       ],
       "size": [
         220,
@@ -201,14 +212,14 @@
       ]
     },
     {
-      "id": "configured_transport",
-      "type": "backend",
-      "label": "Configured ModelClient transport",
-      "sublabel": "context → model → HTTP",
-      "tag": "capability-driven output",
+      "id": "director_task",
+      "type": "security",
+      "label": "DirectorTask",
+      "sublabel": "selected semantic work intent",
+      "tag": "trusted refs · repair max 1",
       "pos": [
-        260,
-        630
+        720,
+        535
       ],
       "size": [
         250,
@@ -216,17 +227,32 @@
       ]
     },
     {
-      "id": "future_execution_seam",
-      "type": "security",
-      "label": "DirectorTask → Task Executive",
-      "sublabel": "mechanical resolution + execution",
-      "tag": "Iteration 3 not entered",
+      "id": "task_executive",
+      "type": "backend",
+      "label": "Task Executive",
+      "sublabel": "validate · resolve · invoke · persist",
+      "tag": "Vault/source + configured web seam",
       "pos": [
-        720,
-        705
+        405,
+        535
       ],
       "size": [
-        250,
+        260,
+        92
+      ]
+    },
+    {
+      "id": "task_execution",
+      "type": "database",
+      "label": "TaskExecution",
+      "sublabel": "result · trace · ACCEPT/REVISE/ASK",
+      "tag": "checkpoint evidence + resume seam",
+      "pos": [
+        70,
+        535
+      ],
+      "size": [
+        275,
         92
       ]
     }
@@ -236,27 +262,23 @@
       "id": "request_to_gemma",
       "from": "request_snapshot",
       "to": "gemma_branch",
-      "label": "isolated proposal projection",
       "variant": "emphasis"
     },
     {
       "id": "request_to_qwen",
       "from": "request_snapshot",
       "to": "qwen_branch",
-      "label": "isolated proposal projection",
       "variant": "emphasis"
     },
     {
       "id": "gemma_to_assessment",
       "from": "gemma_branch",
-      "to": "reciprocal_assessment",
-      "label": "proposal A + assessment of B"
+      "to": "reciprocal_assessment"
     },
     {
       "id": "qwen_to_assessment",
       "from": "qwen_branch",
-      "to": "reciprocal_assessment",
-      "label": "proposal B + assessment of A"
+      "to": "reciprocal_assessment"
     },
     {
       "id": "assessment_to_director",
@@ -265,8 +287,8 @@
       "label": "validated deliberation",
       "variant": "emphasis",
       "labelAt": [
-        745,
-        316
+        650,
+        236
       ]
     },
     {
@@ -277,7 +299,7 @@
       "variant": "emphasis",
       "labelAt": [
         1100,
-        190
+        110
       ]
     },
     {
@@ -288,7 +310,7 @@
       "variant": "security",
       "labelAt": [
         1110,
-        316
+        236
       ]
     },
     {
@@ -299,7 +321,7 @@
       "variant": "security",
       "labelAt": [
         1110,
-        481
+        376
       ]
     },
     {
@@ -310,7 +332,7 @@
       "variant": "security",
       "labelAt": [
         1110,
-        646
+        500
       ]
     },
     {
@@ -320,49 +342,61 @@
       "label": "violations → one bounded semantic correction",
       "variant": "dashed",
       "labelAt": [
-        980,
-        481
+        620,
+        365
       ]
     },
     {
-      "id": "plan_to_future_seam",
+      "id": "director_to_task",
+      "from": "director",
+      "to": "director_task",
+      "label": "selects step + task semantics",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "plan_to_task",
       "from": "final_plan",
-      "to": "future_execution_seam",
-      "label": "Iteration 3 boundary not entered",
+      "to": "director_task",
+      "label": "passive Plan references",
       "variant": "dashed",
       "labelAt": [
-        985,
-        811
+        988,
+        641
       ]
+    },
+    {
+      "id": "task_to_executive",
+      "from": "director_task",
+      "to": "task_executive",
+      "label": "strict validation + configured resolution",
+      "variant": "security",
+      "labelAt": [
+        693,
+        641
+      ]
+    },
+    {
+      "id": "executive_to_execution",
+      "from": "task_executive",
+      "to": "task_execution",
+      "label": "generic call → validated record",
+      "variant": "security",
+      "labelAt": [
+        375,
+        641
+      ]
+    },
+    {
+      "id": "execution_to_director",
+      "from": "task_execution",
+      "to": "director",
+      "label": "evidence → ACCEPT / REVISE / ASK_GUIDANCE",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "left"
     }
   ],
-  "cards": [
-    {
-      "dot": "violet",
-      "title": "Models own semantic content",
-      "items": [
-        "Gemma and Qwen propose independently, then assess only the other proposal through constructive categories.",
-        "The Director authors suggested-change dispositions, overall synthesis, and semantic Plan steps in focused calls.",
-        "Semantic completion asks the same producer for missing meaning; one boundary correction changes only reported violations."
-      ]
-    },
-    {
-      "dot": "emerald",
-      "title": "Python owns protocol and acceptance",
-      "items": [
-        "Python assigns trusted IDs, references, authorship, timestamps, status, dependencies, integrity, and certification fields.",
-        "Generic conformance repair gives the same producer one representation-only attempt without semantic advancement.",
-        "The candidate passes structural certification and semantic architecture acceptance before iteration advances to 3."
-      ]
-    },
-    {
-      "dot": "rose",
-      "title": "Authority boundary preserved",
-      "items": [
-        "The Director decides required semantic work; Plan is passive state with no chooser, router, or execution behavior.",
-        "Task Executive and configuration will later resolve concrete models and execute work mechanically; no third manager exists.",
-        "No DirectorTask generation, TaskExecution, ACCEPT/REVISE, persistence, or Iteration 3 behavior is entered here."
-      ]
-    }
-  ]
+  "cards": []
 }

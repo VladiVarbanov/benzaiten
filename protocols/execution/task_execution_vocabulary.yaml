@@ -63,6 +63,20 @@ validation_outcome:
   - partial
   - inconclusive
 
+director_outcome:
+  - ACCEPT
+  - REVISE
+  - ASK_GUIDANCE
+
+guidance_target:
+  - user
+  - frontier
+
+guidance_policy:
+  - USER_ONLY
+  - ASK_BEFORE_FRONTIER
+  - FRONTIER_ALLOWED
+
 artifact_validation_status:
   - pending
   - valid
@@ -87,3 +101,11 @@ semantics:
     description: Persistence mechanics for one task execution record.
   plan_execution_persistence:
     description: Persistence mechanics for associated plan-execution state.
+  director_outcome:
+    description: Director-authored ACCEPT, REVISE, or ASK_GUIDANCE judgment over one TaskExecution; Task Executive only validates and records it.
+  root_checkpoint:
+    description: The distinguished planning-certified Plan @r1 plus trusted planning finalization and deterministic certification evidence; it has no TaskExecution ACCEPT outcome.
+  execution_checkpoint:
+    description: A Plan revision plus a real Director ACCEPT TaskExecution outcome.
+  execution_transition:
+    description: One chronological successor Plan revision after @r1; consumed transitions equal highest revision minus one.

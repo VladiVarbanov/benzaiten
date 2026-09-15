@@ -80,6 +80,10 @@ granularity:
   - medium
   - fine
 
+output_contract_kind:
+  - text
+  - json_object
+
 semantics:
   methods:
     description: Capability recommendations used at runtime; not normal per-task fields.

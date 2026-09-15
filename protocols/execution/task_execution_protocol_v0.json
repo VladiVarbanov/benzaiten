@@ -52,7 +52,7 @@
       "deployment": {
         "agent": "<resolved-agent-id>",
         "session": "<worker-session-instance-id>",
-        "model": "<resolved-model-identity>",
+        "model": "<resolved-model-identity | null for non-model tool execution>",
         "compute_node": "<resolved-compute-node-id>",
         "host": "<resolved-host-id>"
       },
@@ -88,7 +88,40 @@
       "validation_evidence_refs": [],
       "replan_requested": false,
       "replan_reason": null,
-      "outcomes": [],
+      "outcomes": [
+        {
+          "id": "<trusted-outcome-id>",
+          "decision": "<ACCEPT | REVISE | ASK_GUIDANCE>",
+          "reason": "<concise Director judgment>",
+          "evidence_refs": [],
+          "checkpoint_revision_ref": "<accepted root or execution-checkpoint Plan revision ref>",
+          "checkpoint_outcome_ref": null,
+          "resulting_plan_ref": null,
+          "guidance": {
+            "hurdle": "<material semantic hurdle>",
+            "materiality": "<why guidance is required>",
+            "attempts": [
+              {
+                "description": "<attempt already made>",
+                "established": "<what the attempt established>",
+                "evidence_refs": []
+              }
+            ],
+            "remaining_unresolved": "<smallest unresolved issue>",
+            "evidence_refs": [],
+            "options": [],
+            "recommendation": "<Director recommendation>",
+            "question": "<smallest useful guidance question>",
+            "target": "<user | frontier>",
+            "policy": "<USER_ONLY | ASK_BEFORE_FRONTIER | FRONTIER_ALLOWED>",
+            "frontier_authorized": false
+          },
+          "decided_by_ref": "<configured Director context>",
+          "created_at": "<ISO-8601 timestamp>",
+          "task_ref": "<evaluated DirectorTask ref>",
+          "execution_ref": "<evaluated TaskExecution ref>"
+        }
+      ],
       "persistence": {
         "save": true,
         "location": "<authoritative location, such as plans/{plan_id}/rev-{revision}.json>",

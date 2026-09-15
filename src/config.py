@@ -458,18 +458,47 @@ LOGICAL_CONTEXTS = {
         worker_kind="model",
         worker_ref="qwen",
     ),
+    "managed_resource_tool": LogicalContextStruct(
+        name="managed_resource_tool",
+        participant_role="tool",
+        worker_kind="tool",
+        worker_ref="managed_resource",
+    ),
 }
 
 DIRECTOR_CONTEXT = "gemma_director"
+# No frontier adviser is configured for Managed-Work V0 yet.
+FRONTIER_GUIDANCE_PROVIDER = None
+# Resource mechanics are configured independently from Director semantics.
+# A web provider is deliberately absent in V0; the Task Executive must record
+# that absence rather than silently routing to a model or another service.
+WEB_RESEARCH_PROVIDER = None
+MANAGED_RESOURCE_MAX_BYTES = 1_000_000
+MANAGED_RESOURCE_ROOTS = {
+    "vault": VAULT_DIR,
+    "source": SOURCES_DIR,
+}
+MANAGED_OUTPUT_CONTRACTS = {
+    "text": {
+        "ref": "managed-output-contract:text:v0",
+        "kind": "text",
+    },
+    "json_object": {
+        "ref": "managed-output-contract:json-object:v0",
+        "kind": "json_object",
+    },
+}
 PARTICIPANT_ROLE_CONTEXTS = {
     "primary_worker": "gemma_worker",
     "reviewer": "qwen_worker",
     "challenger": "qwen_worker",
+    "tool": "managed_resource_tool",
 }
 
 DEFAULT_JOB_BUDGET = {
     "semantic_iterations": 3,
     "reasoning_tasks": 20,
+    "execution_transitions": 3,
 }
 
 NORMAL_PLANNING_CONTEXTS = {

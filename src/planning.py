@@ -127,6 +127,265 @@ def _issue(field: str, code: str, message: str) -> ValidationIssue:
     return ValidationIssue(field=field, code=code, message=message)
 
 
+def validate_planning_root_checkpoint(
+    plan: object,
+) -> tuple[ValidationIssue, ...]:
+    """Prove that a Plan is the distinguished planning-certified V0 root."""
+
+    if not isinstance(plan, Mapping):
+        return (_issue(
+            "root_checkpoint.plan", "invalid_shape",
+            "Root checkpoint Plan must be an object.",
+        ),)
+
+    issues: list[ValidationIssue] = []
+    plan_id = plan.get("plan_id")
+    revision_ref = plan.get("revision_ref")
+    if not isinstance(plan_id, str) or not plan_id.strip():
+        issues.append(_issue(
+            "root_checkpoint.plan_id", "invalid_shape",
+            "Root checkpoint plan_id must be a non-empty string.",
+        ))
+    expected_ref = (
+        f"{plan_id}@r1" if isinstance(plan_id, str) and plan_id.strip()
+        else None
+    )
+    if plan.get("revision") != 1:
+        issues.append(_issue(
+            "root_checkpoint.revision", "invalid_root_revision",
+            "The planning-created root checkpoint must be revision 1.",
+        ))
+    if revision_ref != expected_ref:
+        issues.append(_issue(
+            "root_checkpoint.revision_ref", "invalid_root_revision",
+            "The root checkpoint revision_ref must be <plan_id>@r1.",
+        ))
+    if plan.get("based_on_revision_ref") is not None:
+        issues.append(_issue(
+            "root_checkpoint.based_on_revision_ref", "invalid_root_lineage",
+            "The planning-created root cannot be based on another revision.",
+        ))
+    if plan.get("status") != "final":
+        issues.append(_issue(
+            "root_checkpoint.status", "not_certified_root",
+            "The root checkpoint Plan must have final status.",
+        ))
+
+    process = plan.get("process")
+    iteration = process.get("iteration") if isinstance(process, Mapping) else None
+    if (
+        not isinstance(iteration, Mapping)
+        or iteration.get("current") != DEFAULT_JOB_BUDGET["semantic_iterations"]
+        or iteration.get("maximum") != DEFAULT_JOB_BUDGET["semantic_iterations"]
+    ):
+        issues.append(_issue(
+            "root_checkpoint.process.iteration", "not_planning_complete",
+            "The root checkpoint must preserve the completed planning 3/3 state.",
+        ))
+
+    final = plan.get("final")
+    if (
+        not isinstance(final, Mapping)
+        or final.get("is_final") is not True
+        or final.get("selected_revision_ref") != revision_ref
+    ):
+        issues.append(_issue(
+            "root_checkpoint.final", "not_final",
+            "The root checkpoint must be the Plan's selected final revision.",
+        ))
+
+    validation = None
+    integrity = plan.get("integrity")
+    if isinstance(integrity, Mapping):
+        validation = integrity.get("validation")
+    if (
+        not isinstance(validation, Mapping)
+        or validation.get("status") != "valid"
+        or validation.get("validated_by_ref")
+        != "deterministic_plan_validator"
+        or not isinstance(validation.get("validated_at"), str)
+        or not validation["validated_at"].strip()
+        or validation.get("errors") != []
+    ):
+        issues.append(_issue(
+            "root_checkpoint.integrity.validation", "not_certified_root",
+            "The root checkpoint requires trusted deterministic certification.",
+        ))
+
+    cycle = plan.get("planning_cycle")
+    decisions = cycle.get("decisions") if isinstance(cycle, Mapping) else None
+    finalize_records = [
+        item for item in decisions
+        if (
+            isinstance(item, Mapping)
+            and item.get("type") == "finalize"
+            and item.get("resulting_revision_ref") == revision_ref
+            and isinstance(item.get("id"), str)
+            and item["id"].strip()
+            and isinstance(item.get("author_ref"), str)
+            and item["author_ref"].strip()
+        )
+    ] if isinstance(decisions, list) else []
+    if len(finalize_records) != 1:
+        issues.append(_issue(
+            "root_checkpoint.planning_cycle.decisions",
+            "missing_finalization_evidence",
+            "The root checkpoint requires exactly one trusted finalize decision.",
+        ))
+
+    revisions = cycle.get("revisions") if isinstance(cycle, Mapping) else None
+    root_revisions = [
+        item for item in revisions
+        if (
+            isinstance(item, Mapping)
+            and item.get("revision_ref") == revision_ref
+            and item.get("based_on_revision_ref") is None
+        )
+    ] if isinstance(revisions, list) else []
+    if len(root_revisions) != 1:
+        issues.append(_issue(
+            "root_checkpoint.planning_cycle.revisions",
+            "missing_root_revision_evidence",
+            "The root checkpoint requires its trusted root revision record.",
+        ))
+    return tuple(issues)
+
+
+def root_checkpoint_evidence_refs(
+    plan: Mapping[str, Any],
+) -> tuple[str, str]:
+    """Return stable references to embedded root finalization/certification."""
+
+    issues = validate_planning_root_checkpoint(plan)
+    if issues:
+        details = "; ".join(
+            f"{item.field}: {item.message}" for item in issues
+        )
+        raise ValueError(f"Invalid planning root checkpoint: {details}")
+    revision_ref = plan["revision_ref"]
+    decisions = plan["planning_cycle"]["decisions"]
+    finalize = next(
+        item for item in decisions
+        if item.get("type") == "finalize"
+        and item.get("resulting_revision_ref") == revision_ref
+    )
+    return (
+        f"{revision_ref}#planning_cycle.decisions/{finalize['id']}",
+        f"{revision_ref}#integrity.validation",
+    )
+
+
+def execution_transition_budget_state(
+    plan_history: Sequence[Mapping[str, Any]],
+    *,
+    maximum: int | None = None,
+) -> dict[str, Any]:
+    """Validate V0 revision accounting and derive transition consumption."""
+
+    limit = (
+        DEFAULT_JOB_BUDGET["execution_transitions"]
+        if maximum is None
+        else maximum
+    )
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise ValueError(
+            "Execution-transition maximum must be a non-negative integer."
+        )
+    if (
+        not isinstance(plan_history, Sequence)
+        or isinstance(plan_history, (str, bytes))
+        or not plan_history
+    ):
+        raise ValueError("Plan history must contain the certified @r1 root.")
+
+    issues: list[ValidationIssue] = []
+    root = plan_history[0]
+    issues.extend(validate_planning_root_checkpoint(root))
+    plan_id = root.get("plan_id") if isinstance(root, Mapping) else None
+    known_refs: set[str] = set()
+
+    for position, plan in enumerate(plan_history, start=1):
+        field = f"plan_history[{position - 1}]"
+        if not isinstance(plan, Mapping):
+            issues.append(_issue(
+                field, "invalid_shape", "Plan revision must be an object.",
+            ))
+            continue
+        revision_ref = plan.get("revision_ref")
+        expected_ref = (
+            f"{plan_id}@r{position}" if isinstance(plan_id, str) else None
+        )
+        if plan.get("plan_id") != plan_id:
+            issues.append(_issue(
+                f"{field}.plan_id", "lineage_mismatch",
+                "All execution revisions must retain the root plan_id.",
+            ))
+        if plan.get("revision") != position or revision_ref != expected_ref:
+            issues.append(_issue(
+                f"{field}.revision", "non_chronological_revision",
+                "V0 Plan history must contain each chronological revision exactly once.",
+            ))
+        based_on = plan.get("based_on_revision_ref")
+        if position == 1:
+            if based_on is not None:
+                issues.append(_issue(
+                    f"{field}.based_on_revision_ref", "invalid_root_lineage",
+                    "The @r1 root cannot have a lineage parent.",
+                ))
+        elif based_on not in known_refs:
+            issues.append(_issue(
+                f"{field}.based_on_revision_ref", "invalid_lineage_reference",
+                "A successor must branch from an earlier revision in this history.",
+            ))
+        final = plan.get("final")
+        if (
+            not isinstance(final, Mapping)
+            or final.get("is_final") is not True
+            or final.get("selected_revision_ref") != revision_ref
+        ):
+            issues.append(_issue(
+                f"{field}.final", "invalid_finality",
+                "Every executable Plan node must select its current revision.",
+            ))
+        process = plan.get("process")
+        iteration = (
+            process.get("iteration") if isinstance(process, Mapping) else None
+        )
+        if (
+            not isinstance(iteration, Mapping)
+            or iteration.get("current")
+            != DEFAULT_JOB_BUDGET["semantic_iterations"]
+            or iteration.get("maximum")
+            != DEFAULT_JOB_BUDGET["semantic_iterations"]
+        ):
+            issues.append(_issue(
+                f"{field}.process.iteration", "planning_budget_mutated",
+                "Execution revisions must preserve planning iteration 3/3.",
+            ))
+        if isinstance(revision_ref, str):
+            known_refs.add(revision_ref)
+
+    if issues:
+        details = "; ".join(
+            f"{item.field}: {item.message}" for item in issues
+        )
+        raise ValueError(f"Invalid V0 execution Plan lineage: {details}")
+
+    highest_revision = len(plan_history)
+    consumed = highest_revision - 1
+    if consumed > limit:
+        raise RuntimeError(
+            "Execution-transition budget exceeded by persisted Plan lineage."
+        )
+    return {
+        "maximum": limit,
+        "consumed": consumed,
+        "remaining": limit - consumed,
+        "can_create_successor": consumed < limit,
+        "current_plan_ref": plan_history[-1]["revision_ref"],
+    }
+
+
 @lru_cache(maxsize=1)
 def _plan_template() -> Mapping[str, Any]:
     return load_json_mapping(PLAN_PROTOCOL_PATH)
@@ -376,6 +635,26 @@ def semantic_boundary_correction_response_format() -> dict[str, Any]:
     response_format = _json_schema_response_format(
         name="normal_planning_semantic_boundary_correction",
         shape=SEMANTIC_BOUNDARY_CORRECTION_SHAPE,
+    )
+    properties = response_format["json_schema"]["schema"]["properties"]
+    properties["overall_synthesis"] = deepcopy(
+        overall_synthesis_response_format()["json_schema"]["schema"]
+    )
+    properties["plan_steps"] = deepcopy(
+        plan_steps_response_format()["json_schema"]["schema"]
+    )
+    return response_format
+
+
+def successor_plan_response_format() -> dict[str, Any]:
+    """Constrain one execution-driven successor Plan semantic node."""
+
+    response_format = _json_schema_response_format(
+        name="managed_work_successor_plan_semantics",
+        shape={
+            "overall_synthesis": OVERALL_SYNTHESIS_SEMANTIC_SHAPE,
+            "plan_steps": PLAN_STEPS_SEMANTIC_SHAPE,
+        },
     )
     properties = response_format["json_schema"]["schema"]["properties"]
     properties["overall_synthesis"] = deepcopy(
@@ -1871,7 +2150,13 @@ def _validate_cycle_records(
         if isinstance(item, Mapping)
     }
     revision_ref = plan.get("revision_ref")
-    known_targets = known_proposals | known_steps | {revision_ref}
+    known_revisions = {
+        item.get("revision_ref") for item in cycle.get("revisions", [])
+        if isinstance(item, Mapping)
+    }
+    known_targets = known_proposals | known_steps | known_revisions | {
+        revision_ref
+    }
 
     decision_fields = set(
         _plan_template()["planning_cycle"]["decisions"][0]
@@ -2155,3 +2440,472 @@ def certify_final_plan(plan: Mapping[str, Any]) -> dict[str, Any]:
         "errors": [],
     }
     return certified
+
+
+def validate_successor_plan_semantics(
+    semantics: object,
+) -> tuple[ValidationIssue, ...]:
+    """Validate focused Director semantics for one successor Plan node."""
+
+    expected = {"overall_synthesis", "plan_steps"}
+    issues = _exact_fields(
+        semantics, field="successor_plan_semantics", expected=expected,
+    )
+    if not isinstance(semantics, Mapping):
+        return tuple(issues)
+    issues.extend(validate_overall_synthesis_semantics(
+        semantics.get("overall_synthesis")
+    ))
+    issues.extend(validate_plan_steps_semantics(semantics.get("plan_steps")))
+    return tuple(issues)
+
+
+def _accepted_checkpoint_issues(
+    plan_history: Sequence[Mapping[str, Any]],
+    *,
+    checkpoint_revision_ref: str,
+    checkpoint_outcome_ref: str | None,
+    accepted_outcomes_by_ref: Mapping[str, Mapping[str, Any]],
+) -> list[ValidationIssue]:
+    plans_by_ref = {
+        plan.get("revision_ref"): plan
+        for plan in plan_history
+        if isinstance(plan.get("revision_ref"), str)
+    }
+    checkpoint_plan = plans_by_ref.get(checkpoint_revision_ref)
+    if checkpoint_plan is None:
+        return [_issue(
+            "checkpoint_revision_ref", "unknown_checkpoint",
+            "Selected checkpoint Plan is not present in immutable history.",
+        )]
+    if checkpoint_outcome_ref is None:
+        root_issues = validate_planning_root_checkpoint(checkpoint_plan)
+        if root_issues:
+            return [
+                _issue(
+                    "checkpoint_outcome_ref", "invalid_root_checkpoint",
+                    "Only the planning-certified @r1 root may omit an ACCEPT outcome.",
+                ),
+                *root_issues,
+            ]
+        return []
+
+    outcome = accepted_outcomes_by_ref.get(checkpoint_outcome_ref)
+    if not isinstance(outcome, Mapping):
+        return [_issue(
+            "checkpoint_outcome_ref", "unknown_checkpoint",
+            "Execution checkpoint must resolve to a real ACCEPT outcome.",
+        )]
+    issues: list[ValidationIssue] = []
+    if outcome.get("id") != checkpoint_outcome_ref:
+        issues.append(_issue(
+            "checkpoint_outcome_ref", "reference_mismatch",
+            "Accepted outcome identity does not match its trusted catalog key.",
+        ))
+    if outcome.get("decision") != "ACCEPT":
+        issues.append(_issue(
+            "checkpoint_outcome_ref", "not_accepted",
+            "Execution checkpoint must reference an ACCEPT outcome.",
+        ))
+    if outcome.get("checkpoint_revision_ref") != checkpoint_revision_ref:
+        issues.append(_issue(
+            "checkpoint_outcome_ref", "reference_mismatch",
+            "Accepted outcome does not identify the selected Plan revision.",
+        ))
+    return issues
+
+
+def validate_successor_plan(
+    plan: object,
+    *,
+    prior_plan_history: Sequence[Mapping[str, Any]],
+    checkpoint_revision_ref: str,
+    checkpoint_outcome_ref: str | None,
+    accepted_outcomes_by_ref: Mapping[str, Mapping[str, Any]],
+    triggering_execution_ref: str,
+    triggering_outcome_ref: str,
+    director_ref: str,
+    require_pending_validation: bool = False,
+) -> tuple[ValidationIssue, ...]:
+    """Validate one immutable chronological successor against prior history."""
+
+    issues = list(_exact_fields(
+        plan, field="plan", expected=set(_plan_template()),
+    ))
+    if not isinstance(plan, Mapping):
+        return tuple(issues)
+    if not prior_plan_history:
+        issues.append(_issue(
+            "prior_plan_history", "required",
+            "Successor validation requires immutable prior Plan history.",
+        ))
+        return tuple(issues)
+
+    issues.extend(_accepted_checkpoint_issues(
+        prior_plan_history,
+        checkpoint_revision_ref=checkpoint_revision_ref,
+        checkpoint_outcome_ref=checkpoint_outcome_ref,
+        accepted_outcomes_by_ref=accepted_outcomes_by_ref,
+    ))
+    current = prior_plan_history[-1]
+    expected_revision = len(prior_plan_history) + 1
+    plan_id = prior_plan_history[0].get("plan_id")
+    revision_ref = f"{plan_id}@r{expected_revision}"
+    expected_scalars = {
+        "plan_id": plan_id,
+        "revision": expected_revision,
+        "revision_ref": revision_ref,
+        "based_on_revision_ref": checkpoint_revision_ref,
+        "parent_plan_ref": current.get("parent_plan_ref"),
+        "status": "final",
+        "current_work_ref": current.get("current_work_ref"),
+    }
+    for name, expected_value in expected_scalars.items():
+        if plan.get(name) != expected_value:
+            issues.append(_issue(
+                f"plan.{name}", "value_mismatch",
+                f"Expected {expected_value!r}.",
+            ))
+
+    try:
+        execution_transition_budget_state([
+            *prior_plan_history, plan,
+        ])
+    except (ValueError, RuntimeError) as exc:
+        issues.append(_issue(
+            "plan.revision", "invalid_execution_transition", str(exc),
+        ))
+
+    if plan.get("participants") != current.get("participants"):
+        issues.append(_issue(
+            "plan.participants", "history_mutation",
+            "Successor must preserve configured planning participants.",
+        ))
+    if plan.get("process") != current.get("process"):
+        issues.append(_issue(
+            "plan.process", "planning_state_mutation",
+            "Successor must preserve the completed planning 3/3 process.",
+        ))
+    issues.extend(_string(plan.get("goal"), "plan.goal"))
+    issues.extend(_string_list(
+        plan.get("approach_summary"), "plan.approach_summary", nonempty=True,
+    ))
+
+    cycle = plan.get("planning_cycle")
+    current_cycle = current.get("planning_cycle")
+    if not isinstance(cycle, Mapping) or not isinstance(current_cycle, Mapping):
+        issues.append(_issue(
+            "plan.planning_cycle", "invalid_shape",
+            "Successor and current Plan require planning_cycle objects.",
+        ))
+    else:
+        for name in (
+            "proposals", "support", "critiques", "suggested_changes",
+        ):
+            if cycle.get(name) != current_cycle.get(name):
+                issues.append(_issue(
+                    f"plan.planning_cycle.{name}", "history_mutation",
+                    f"Successor must preserve prior {name} records.",
+                ))
+        decisions = cycle.get("decisions")
+        prior_decisions = current_cycle.get("decisions")
+        revisions = cycle.get("revisions")
+        prior_revisions = current_cycle.get("revisions")
+        if (
+            not isinstance(decisions, list)
+            or not isinstance(prior_decisions, list)
+            or decisions[:-1] != prior_decisions
+        ):
+            issues.append(_issue(
+                "plan.planning_cycle.decisions", "history_mutation",
+                "Successor must append exactly one decision to prior history.",
+            ))
+        elif not decisions:
+            issues.append(_issue(
+                "plan.planning_cycle.decisions", "required",
+                "Successor requires a Director revision decision.",
+            ))
+        else:
+            decision = decisions[-1]
+            if (
+                not isinstance(decision, Mapping)
+                or decision.get("author_ref") != director_ref
+                or decision.get("type") != "request_revision"
+                or decision.get("target_refs") != [
+                    checkpoint_revision_ref
+                ]
+                or decision.get("resulting_revision_ref") != revision_ref
+                or triggering_execution_ref
+                not in decision.get("artifact_refs", [])
+                or triggering_outcome_ref
+                not in decision.get("artifact_refs", [])
+            ):
+                issues.append(_issue(
+                    "plan.planning_cycle.decisions[-1]",
+                    "invalid_revision_decision",
+                    "Successor requires one trusted Director revision decision with triggering evidence.",
+                ))
+        if (
+            not isinstance(revisions, list)
+            or not isinstance(prior_revisions, list)
+            or revisions[:-1] != prior_revisions
+        ):
+            issues.append(_issue(
+                "plan.planning_cycle.revisions", "history_mutation",
+                "Successor must append exactly one revision to prior history.",
+            ))
+        elif not revisions:
+            issues.append(_issue(
+                "plan.planning_cycle.revisions", "required",
+                "Successor requires one revision record.",
+            ))
+        else:
+            revision = revisions[-1]
+            if (
+                not isinstance(revision, Mapping)
+                or revision.get("revision_ref") != revision_ref
+                or revision.get("based_on_revision_ref")
+                != checkpoint_revision_ref
+                or revision.get("author_ref") != director_ref
+            ):
+                issues.append(_issue(
+                    "plan.planning_cycle.revisions[-1]",
+                    "invalid_revision_record",
+                    "Successor revision record must identify its chronological node and branch parent.",
+                ))
+        issues.extend(_validate_cycle_records(plan, director_ref=director_ref))
+
+    issues.extend(_validate_plan_steps(plan))
+    prior_step_ids = {
+        step.get("id")
+        for prior in prior_plan_history
+        for step in prior.get("steps", [])
+        if isinstance(step, Mapping)
+    }
+    steps = plan.get("steps")
+    if isinstance(steps, list):
+        for index, step in enumerate(steps, start=1):
+            if not isinstance(step, Mapping):
+                continue
+            expected_step_id = f"{revision_ref}:step-{index}"
+            if step.get("id") != expected_step_id:
+                issues.append(_issue(
+                    f"plan.steps[{index - 1}].id", "invalid_revision_step_id",
+                    "Successor step ID must be qualified by the new revision.",
+                ))
+            if step.get("id") in prior_step_ids:
+                issues.append(_issue(
+                    f"plan.steps[{index - 1}].id", "reused_step_id",
+                    "Successor step IDs must never reuse historical IDs.",
+                ))
+
+    final = plan.get("final")
+    if (
+        not isinstance(final, Mapping)
+        or final.get("is_final") is not True
+        or final.get("selected_revision_ref") != revision_ref
+        or final.get("decision_maker_ref") != director_ref
+    ):
+        issues.append(_issue(
+            "plan.final", "invalid_finality",
+            "Successor must be a Director-decided final current revision.",
+        ))
+
+    integrity = plan.get("integrity")
+    if not isinstance(integrity, Mapping):
+        issues.append(_issue(
+            "plan.integrity", "invalid_shape",
+            "Successor must preserve Plan integrity metadata.",
+        ))
+    else:
+        if integrity.get("rules") != _plan_template()["integrity"]["rules"]:
+            issues.append(_issue(
+                "plan.integrity.rules", "integrity_mismatch",
+                "Successor must preserve all authoritative integrity rules.",
+            ))
+        validation = integrity.get("validation")
+        if not isinstance(validation, Mapping):
+            issues.append(_issue(
+                "plan.integrity.validation", "invalid_shape",
+                "Successor validation state must be an object.",
+            ))
+        elif require_pending_validation:
+            if validation != {
+                "status": "pending",
+                "validated_by_ref": None,
+                "validated_at": None,
+                "errors": [],
+            }:
+                issues.append(_issue(
+                    "plan.integrity.validation", "authority_mismatch",
+                    "Uncertified successor must leave deterministic validation pending.",
+                ))
+        elif (
+            validation.get("status") != "valid"
+            or validation.get("validated_by_ref")
+            != "deterministic_plan_validator"
+            or not isinstance(validation.get("validated_at"), str)
+            or not validation["validated_at"].strip()
+            or validation.get("errors") != []
+        ):
+            issues.append(_issue(
+                "plan.integrity.validation", "invalid_certification",
+                "Certified successor requires trusted deterministic validation.",
+            ))
+    return tuple(issues)
+
+
+def assemble_successor_plan(
+    plan_history: Sequence[Mapping[str, Any]],
+    *,
+    checkpoint_revision_ref: str,
+    checkpoint_outcome_ref: str | None,
+    accepted_outcomes_by_ref: Mapping[str, Mapping[str, Any]],
+    successor_semantics: Mapping[str, Any],
+    triggering_execution_ref: str,
+    triggering_outcome_ref: str,
+    director_ref: str,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Assemble one immutable successor without mutating prior Plan nodes."""
+
+    transition_state = execution_transition_budget_state(plan_history)
+    if not transition_state["can_create_successor"]:
+        raise RuntimeError("Execution-transition budget exhausted.")
+    checkpoint_issues = _accepted_checkpoint_issues(
+        plan_history,
+        checkpoint_revision_ref=checkpoint_revision_ref,
+        checkpoint_outcome_ref=checkpoint_outcome_ref,
+        accepted_outcomes_by_ref=accepted_outcomes_by_ref,
+    )
+    semantic_issues = validate_successor_plan_semantics(successor_semantics)
+    issues = [*checkpoint_issues, *semantic_issues]
+    if issues:
+        details = "; ".join(
+            f"{item.field}: {item.message}" for item in issues
+        )
+        raise ValueError(f"Cannot assemble successor Plan: {details}")
+    for name, value in (
+        ("triggering_execution_ref", triggering_execution_ref),
+        ("triggering_outcome_ref", triggering_outcome_ref),
+        ("director_ref", director_ref),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string.")
+
+    current = plan_history[-1]
+    plan = deepcopy(dict(current))
+    overall = successor_semantics["overall_synthesis"]
+    step_semantics = successor_semantics["plan_steps"]["steps"]
+    revision = len(plan_history) + 1
+    revision_ref = f"{plan['plan_id']}@r{revision}"
+    created_at = timestamp or datetime.now(timezone.utc).isoformat()
+    plan.update({
+        "revision": revision,
+        "revision_ref": revision_ref,
+        "based_on_revision_ref": checkpoint_revision_ref,
+        "status": "final",
+        "goal": overall["goal"],
+        "approach_summary": deepcopy(overall["approach_summary"]),
+    })
+
+    cycle = plan["planning_cycle"]
+    proposals = cycle["proposals"]
+    artifact_refs = [triggering_execution_ref, triggering_outcome_ref]
+    if (
+        checkpoint_outcome_ref is not None
+        and checkpoint_outcome_ref not in artifact_refs
+    ):
+        artifact_refs.append(checkpoint_outcome_ref)
+    cycle["decisions"].append({
+        "id": f"{plan['plan_id']}:decision-revision-{revision}",
+        "iteration": DEFAULT_JOB_BUDGET["semantic_iterations"],
+        "author_ref": director_ref,
+        "type": "request_revision",
+        "target_refs": [checkpoint_revision_ref],
+        "rationale": overall["decision_rationale"],
+        "accepted_change_refs": [],
+        "rejected_change_refs": [],
+        "deferred_change_refs": [],
+        "rejected_alternatives": [
+            {
+                "target_ref": proposals[item["proposal_number"] - 1]["id"],
+                "reason": item["reason"],
+            }
+            for item in overall["rejected_alternatives"]
+        ],
+        "resulting_revision_ref": revision_ref,
+        "message_refs": [],
+        "artifact_refs": artifact_refs,
+    })
+    cycle["revisions"].append({
+        "revision_ref": revision_ref,
+        "based_on_revision_ref": checkpoint_revision_ref,
+        "author_ref": director_ref,
+        "source_proposal_refs": [],
+        "source_support_refs": [],
+        "source_critique_refs": [],
+        "source_change_refs": [],
+        "change_summary": deepcopy(overall["change_summary"]),
+        "created_at": created_at,
+    })
+
+    step_ids = [
+        f"{revision_ref}:step-{index}"
+        for index in range(1, len(step_semantics) + 1)
+    ]
+    plan["steps"] = [
+        {
+            "index": index,
+            "id": step_ids[index - 1],
+            "action": step["action"],
+            "reason": step["reason"],
+            "target_ref": plan["current_work_ref"],
+            "instructions": deepcopy(step["instructions"]),
+            "scope_boundary": step["scope_boundary"],
+            "expected_result": step["expected_result"],
+            "validation": deepcopy(step["validation"]),
+            "depends_on": [
+                step_ids[number - 1]
+                for number in step["depends_on_step_numbers"]
+            ],
+            "support_refs": [],
+            "critique_refs": [],
+            "task_ref": None,
+            "status": "proposed",
+        }
+        for index, step in enumerate(step_semantics, start=1)
+    ]
+    plan["final"] = {
+        "is_final": True,
+        "selected_revision_ref": revision_ref,
+        "decision_maker_ref": director_ref,
+        "decision_reason": overall["decision_reason"],
+        "unresolved_risks": deepcopy(overall["unresolved_risks"]),
+        "unresolved_questions": deepcopy(overall["unresolved_questions"]),
+        "decided_at": created_at,
+    }
+    plan["integrity"]["validation"] = {
+        "status": "pending",
+        "validated_by_ref": None,
+        "validated_at": None,
+        "errors": [],
+    }
+
+    validation_issues = validate_successor_plan(
+        plan,
+        prior_plan_history=plan_history,
+        checkpoint_revision_ref=checkpoint_revision_ref,
+        checkpoint_outcome_ref=checkpoint_outcome_ref,
+        accepted_outcomes_by_ref=accepted_outcomes_by_ref,
+        triggering_execution_ref=triggering_execution_ref,
+        triggering_outcome_ref=triggering_outcome_ref,
+        director_ref=director_ref,
+        require_pending_validation=True,
+    )
+    if validation_issues:
+        details = "; ".join(
+            f"{item.field}: {item.message}" for item in validation_issues
+        )
+        raise ValueError(f"Invalid assembled successor Plan: {details}")
+    return plan

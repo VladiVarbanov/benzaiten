@@ -116,13 +116,18 @@ question_policy:
     - dependency_order
     - critique_resolution
 
-  resolution_order:
+  available_resolution_resources:
     - supplied_context
     - authorized_local_resources
     - authorized_source_retrieval
     - assigned_peer_model
-    - higher_model_or_arbiter
-    - user_or_decision_maker
+    - configured_local_workers
+    - authorized_web_research
+    - user_guidance
+    - authorized_frontier_adviser
+
+  resource_order: director_determined_non_mandatory
+  frontier_authority: user_controlled
 
   require_anchor: true
   require_planning_impact: true

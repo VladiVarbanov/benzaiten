@@ -14,6 +14,7 @@
     "document_preparation_tmp": "workspace/tmp/document_preparation",
     "knowledge_extraction_tmp": "workspace/tmp/knowledge_extraction",
     "artifacts": "workspace/artifacts",
+    "managed_work_artifacts": "workspace/artifacts/managed_work",
     "document_preparation_artifacts": "workspace/artifacts/document_preparation",
     "knowledge_extraction_artifacts": "workspace/artifacts/knowledge_extraction",
     "vault": "vault",
@@ -77,6 +78,31 @@
       "pattern": "vault/sources/{source_id}",
       "owner": "source_management",
       "purpose": "authoritative source record"
+    },
+    "managed_work_job": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}",
+      "owner": "orchestrator",
+      "purpose": "immutable managed-work artifacts plus passive resume pointer"
+    },
+    "managed_work_plans": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/plans",
+      "owner": "planning",
+      "purpose": "immutable chronological Plan revisions"
+    },
+    "managed_work_tasks": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/tasks",
+      "owner": "director",
+      "purpose": "immutable trusted DirectorTask artifacts"
+    },
+    "managed_work_executions": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/executions",
+      "owner": "task_executive",
+      "purpose": "immutable evaluated TaskExecution artifacts"
+    },
+    "managed_work_calls": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/calls",
+      "owner": "orchestrator",
+      "purpose": "immutable reasoning-call request and response records"
     }
   },
   "file_patterns": {
@@ -95,6 +121,34 @@
     "extraction_manifest": {
       "pattern": "workspace/artifacts/knowledge_extraction/{target_okf_id}/{extraction_work_id}/extraction_manifest.json",
       "owner": "knowledge_extraction"
+    },
+    "managed_work_request": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/request.json",
+      "owner": "orchestrator"
+    },
+    "managed_work_plan": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/plans/{revision_file}.json",
+      "owner": "planning"
+    },
+    "managed_work_task": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/tasks/{task_file}.json",
+      "owner": "director"
+    },
+    "managed_work_execution": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/executions/{execution_file}.json",
+      "owner": "task_executive"
+    },
+    "managed_work_call_request": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/calls/{call_file}.request.json",
+      "owner": "orchestrator"
+    },
+    "managed_work_call_response": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/calls/{call_file}.response.json",
+      "owner": "orchestrator"
+    },
+    "managed_work_resume": {
+      "pattern": "workspace/artifacts/managed_work/{job_ref}/resume.json",
+      "owner": "orchestrator"
     },
     "source_manifest": {
       "pattern": "vault/sources/{source_id}/source_manifest.json",
@@ -172,6 +226,21 @@
       "type": "filesystem_safe_id"
     },
     "extraction_work_id": {
+      "type": "filesystem_safe_id"
+    },
+    "job_ref": {
+      "type": "filesystem_safe_id"
+    },
+    "revision_file": {
+      "type": "filesystem_safe_id"
+    },
+    "task_file": {
+      "type": "filesystem_safe_id"
+    },
+    "execution_file": {
+      "type": "filesystem_safe_id"
+    },
+    "call_file": {
       "type": "filesystem_safe_id"
     }
   }

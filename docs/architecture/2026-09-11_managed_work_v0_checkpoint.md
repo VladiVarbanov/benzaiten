@@ -53,4 +53,23 @@ Certified Plan
 → Director ACCEPT / REVISE
 ```
 
-Iteration 3 design and runtime behavior are not part of this checkpoint.
+The initial in-memory Iteration-3 execution foundation was implemented on 2026-09-15. The same session then reconciled outcomes, graph revisions, checkpoint identity, persistence/resume, frontier authorization, output contracts, and configured resource execution; the implementation ledger records the test evidence and remaining live/provider seams. Its durable design authority and frozen continuation decisions follow.
+
+## Iteration 3 — frozen decisions
+
+The complete recovered design record is `docs/architecture/2026-09-14_managed_work_iteration3_design_record.md`. These concise decisions are authoritative for future restart:
+
+- The 2026-09-15 147-test in-memory DirectorTask → Task Executive → TaskExecution path is the validated execution foundation. Its bounded same-Plan REVISE controller is transitional and superseded by the revision policy below.
+- Planning semantic iteration 3 marks production of the certified Plan and remains planning-only. Execution has a separately configured transition limit; no planning counter is reused or reset.
+- Managed-Work V0 derives transitions from immutable Plan lineage: `@r1` is the planning-created certified Plan, every later chronological revision is exactly one execution transition, and consumed transitions equal `highest revision - 1`. No mutable transition counter or `JobContext` is introduced.
+- The Director's semantic outcomes are `ACCEPT`, `REVISE`, and non-terminal `ASK_GUIDANCE`. Representation repair and transport retry are separate mechanical concerns and never mean REVISE.
+- `ACCEPT` accepts execution evidence, not the already-certified Plan. Continued work creates a successor Plan revision.
+- `REVISE` selects an accepted checkpoint and creates an immutable successor revision. The same `plan_id` is retained, `based_on_revision_ref` records the graph edge, revision numbers remain chronological, and failed or abandoned branches are preserved.
+- The planning-certified `@r1` is the distinguished root checkpoint: certified Plan state plus trusted planning finalization/certification evidence, with no fabricated TaskExecution ACCEPT. Every checkpoint created after execution identifies both its Plan revision and a real ACCEPT TaskExecution/outcome. A null `checkpoint_outcome_ref` is valid only for the contextually proven root. No Checkpoint protocol, class, manager, or database is added.
+- `ASK_GUIDANCE` persists an awaiting-guidance seam and consumes no transition until returned guidance is incorporated into a successor Plan.
+- Frontier policy is persisted at job level as `USER_ONLY`, `ASK_BEFORE_FRONTIER`, or `FRONTIER_ALLOWED`. No frontier call occurs without both explicit persisted user authorization and a configured provider; a frontier model remains an adviser.
+- The Director may use Vault/OKF, supplied or local sources, web research, and configured local workers as ordinary semantic resources. Task Executive and configuration resolve their mechanics through the existing DirectorTask → TaskExecution seam. No mandatory escalation order, research coordinator, intelligent router, or third manager is allowed.
+- Python gates representation, trusted references, authorization, budgets, lineage, and protocol integrity. The Director decides WHAT and judges meaning. Task Executive determines HOW mechanically. Plan remains passive and ModelClient remains generic.
+- The Director selects the semantic output kind (`text` or `json_object`); Python maps it to a trusted configured contract and validates only representation. Structurally valid but semantically inadequate content remains for Director judgment.
+- Managed-work artifacts are immutable except for a minimal atomically replaced `resume.json`; transition use is lineage-derived and reasoning-call use is recovered from call artifacts.
+- The frozen Managed-Work V0 TARGET remains unchanged.
