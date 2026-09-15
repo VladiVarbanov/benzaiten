@@ -772,6 +772,7 @@ def render_director_task_selection_messages(
                 "kind": item["kind"],
                 "name": item["name"],
                 "description": item["description"],
+                **({"content": item["content"]} if item["kind"] == "execution" else {}),
             }
             for item in available_inputs
         ],
@@ -968,12 +969,13 @@ def validate_director_task_for_execution(
     return tuple(issues)
 
 
-_RESOURCE_INPUT_KINDS = frozenset({"supplied", "vault", "source", "web"})
+_RESOURCE_INPUT_KINDS = frozenset({"supplied", "vault", "source", "web", "execution"})
 
 
 def numbered_managed_inputs(
     eligible_steps: Sequence[Mapping[str, object]],
     available_resources: Sequence[Mapping[str, object]] = (),
+    prior_executions: Sequence[Mapping[str, object]] = (),
 ) -> tuple[dict[str, object], ...]:
     """Assign trusted numbers without exposing resource mechanics to Director."""
 
@@ -992,7 +994,9 @@ def numbered_managed_inputs(
         ):
             raise ValueError("Eligible Plan step requires index and target_ref.")
         if target_ref in seen:
-            raise ValueError("Eligible Plan steps must not reuse target_ref.")
+            entry = next(item for item in numbered if item["ref"] == target_ref)
+            entry["plan_step_numbers"].append(step_number)
+            continue
         seen.add(target_ref)
         numbered.append({
             "number": len(numbered) + 1,
@@ -1000,7 +1004,7 @@ def numbered_managed_inputs(
             "kind": "supplied",
             "name": f"Plan step {step_number} target",
             "description": "The input named by this eligible Plan step.",
-            "plan_step_number": step_number,
+            "plan_step_numbers": [step_number],
         })
     expected_fields = {"ref", "kind", "name", "description"}
     for resource in available_resources:
@@ -1009,7 +1013,7 @@ def numbered_managed_inputs(
                 "Managed resource descriptors require exactly ref, kind, "
                 "name, and description."
             )
-        if resource.get("kind") not in _RESOURCE_INPUT_KINDS - {"supplied"}:
+        if resource.get("kind") not in {"vault", "source", "web"}:
             raise ValueError("Managed resource kind must be vault, source, or web.")
         if any(
             not isinstance(resource.get(name), str)
@@ -1026,7 +1030,38 @@ def numbered_managed_inputs(
             )
         seen.add(reference)
         numbered.append({"number": len(numbered) + 1, **dict(resource)})
+    for execution in prior_executions:
+        from task_execution import validate_task_execution_mapping
+
+        issues = validate_task_execution_mapping(execution)
+        if issues:
+            raise ValueError("Historical execution input is not structurally valid.")
+        reference = "execution:" + str(execution["execution_id"])
+        if reference in seen:
+            raise ValueError("Duplicate historical execution input reference.")
+        seen.add(reference)
+        numbered.append({
+            "number": len(numbered) + 1, "ref": reference, "kind": "execution",
+            "name": f"Execution evidence for {execution['plan_execution']['plan_ref']}",
+            "description": "Prior execution result, failure evidence, and recorded Director outcomes.",
+            "content": _execution_evidence_projection(execution),
+        })
     return tuple(numbered)
+
+
+def _execution_evidence_projection(execution: Mapping[str, Any]) -> dict[str, Any]:
+    """Expose actual evidence without deployment or retrieval mechanics."""
+    from copy import deepcopy
+
+    return {
+        "execution_id": execution["execution_id"],
+        "plan_ref": execution["plan_execution"]["plan_ref"],
+        "step_ref": execution["plan_execution"]["current_step_ref"],
+        "status": execution["control"]["status"],
+        "result": deepcopy(execution["result"]),
+        "error": deepcopy(execution["error"]),
+        "outcomes": deepcopy(execution["plan_execution"]["outcomes"]),
+    }
 
 
 def select_director_task(
@@ -1039,9 +1074,11 @@ def select_director_task(
     fixed_step_ref: Optional[str] = None,
     revision_evidence: Optional[Mapping[str, object]] = None,
     available_resources: Sequence[Mapping[str, object]] = (),
+    prior_executions: Sequence[Mapping[str, object]] = (),
     task_id: Optional[str] = None,
     reasoning_task_count: int = 0,
     reasoning_task_limit: Optional[int] = None,
+    call_observer: object = None,
 ) -> Mapping[str, object]:
     """Ask the configured Director to select a step and emit task semantics."""
 
@@ -1097,12 +1134,12 @@ def select_director_task(
         else "director_task_selection"
     )
     candidate_numbers = tuple(int(step["index"]) for step in candidates)
-    input_catalog = numbered_managed_inputs(candidates, available_resources)
+    input_catalog = numbered_managed_inputs(candidates, available_resources, prior_executions)
     input_numbers = tuple(int(item["number"]) for item in input_catalog)
     plan_input_numbers = {
-        int(item["plan_step_number"]): int(item["number"])
+        int(step_number): int(item["number"])
         for item in input_catalog
-        if "plan_step_number" in item
+        for step_number in item.get("plan_step_numbers", [])
     }
     configured_roles = tuple(sorted(PARTICIPANT_ROLE_CONTEXTS))
     response_format = director_task_selection_response_format(
@@ -1148,24 +1185,13 @@ def select_director_task(
             if selected_format is not None
             else None
         )
-        response = caller(
-            DIRECTOR_CONTEXT,
-            selected_messages,
-            response_format=selected_format,
+        from orchestrator import invoke_managed_model
+        return invoke_managed_model(
+            caller, DIRECTOR_CONTEXT, selected_messages,
+            stage=stage, reasoning_task=reasoning_task_count, calls=calls,
+            call_observer=call_observer, response_format=selected_format,
             chat_template_kwargs=template_kwargs,
         )
-        if not isinstance(response, ModelResponse):
-            raise TypeError("Director model caller must return ModelResponse.")
-        calls.append({
-            "stage": stage,
-            "logical_context": DIRECTOR_CONTEXT,
-            "model_name": assignment.model.model_name,
-            "node": assignment.model.node,
-            "endpoint_url": assignment.model.endpoint_url,
-            "request_id": response.request_id,
-            "reasoning_task": reasoning_task_count,
-        })
-        return response
 
     current_response = call(artifact_kind, messages)
     attempt = 0
@@ -1433,6 +1459,22 @@ def director_evaluation_response_format(
     }
 
 
+def _classify_missing_judgments(
+    issues: Sequence[ValidationIssue],
+) -> tuple[ValidationIssue, ...]:
+    """Missing meaning is completion, not a representation defect."""
+    missing = {item.field for item in issues if item.code == "required"}
+    return tuple(
+        _issue(item.field, "missing_semantic_decision", item.message)
+        if item.code == "required" else item
+        for item in issues
+        if item.code == "required" or not any(
+            item.field == field or item.field.startswith(field + ".")
+            for field in missing
+        )
+    )
+
+
 def validate_director_evaluation_semantics(
     data: object,
     *,
@@ -1458,6 +1500,17 @@ def validate_director_evaluation_semantics(
             f"director_evaluation.{name}", "required",
             f"Missing Director evaluation field: {name}",
         ))
+
+    for name in ("decision", "reason", "continue_work", "evidence_numbers"):
+        if name in data and (
+            data[name] is None or data[name] == ""
+            or (name == "reason" and isinstance(data[name], str) and not data[name].strip())
+            or (name == "evidence_numbers" and data[name] == [])
+        ):
+            issues.append(_issue(
+                f"director_evaluation.{name}", "required",
+                f"Director evaluation omitted the judgment: {name}.",
+            ))
 
     decision = data.get("decision")
     allowed_decisions = {"ACCEPT", "REVISE"}
@@ -1511,20 +1564,20 @@ def validate_director_evaluation_semantics(
             ))
         if continue_work is not True:
             issues.append(_issue(
-                "director_evaluation.continue_work", "invalid_semantics",
+                "director_evaluation.continue_work", "invalid_partition",
                 "REVISE always requests successor Plan semantics.",
             ))
     elif backtrack_number is not None:
         issues.append(_issue(
             "director_evaluation.backtrack_checkpoint_number",
-            "invalid_semantics",
+            "invalid_partition",
             "ACCEPT and ASK_GUIDANCE must not select a backtracking checkpoint.",
         ))
     guidance = data.get("guidance")
     if decision == "ASK_GUIDANCE":
         if continue_work is not False:
             issues.append(_issue(
-                "director_evaluation.continue_work", "invalid_semantics",
+                "director_evaluation.continue_work", "invalid_partition",
                 "ASK_GUIDANCE pauses without creating a successor Plan.",
             ))
         issues.extend(_validate_director_guidance_semantics(
@@ -1533,10 +1586,10 @@ def validate_director_evaluation_semantics(
         ))
     elif guidance is not None:
         issues.append(_issue(
-            "director_evaluation.guidance", "invalid_semantics",
+            "director_evaluation.guidance", "invalid_partition",
             "Only ASK_GUIDANCE may contain guidance semantics.",
         ))
-    return tuple(issues)
+    return _classify_missing_judgments(issues)
 
 
 def _validate_director_guidance_semantics(
@@ -1637,7 +1690,7 @@ def _validate_director_guidance_semantics(
             f"{field}.target", "invalid_vocabulary",
             "Guidance target must be user or frontier.",
         ))
-    return tuple(issues)
+    return _classify_missing_judgments(issues)
 
 
 def render_director_evaluation_messages(
@@ -1852,6 +1905,7 @@ def evaluate_task_execution(
     timestamp: Optional[str] = None,
     reasoning_task_count: int = 0,
     reasoning_task_limit: Optional[int] = None,
+    call_observer: object = None,
 ) -> Mapping[str, object]:
     """Obtain and record one configured Director execution judgment."""
 
@@ -2066,120 +2120,44 @@ def evaluate_task_execution(
             if selected_format is not None
             else None
         )
-        response = caller(
-            DIRECTOR_CONTEXT,
-            selected_messages,
-            response_format=selected_format,
+        from orchestrator import invoke_managed_model
+        return invoke_managed_model(
+            caller, DIRECTOR_CONTEXT, selected_messages,
+            stage=stage, reasoning_task=reasoning_task_count, calls=calls,
+            call_observer=call_observer, response_format=selected_format,
             chat_template_kwargs=template_kwargs,
         )
-        if not isinstance(response, ModelResponse):
-            raise TypeError(
-                "Director evaluation caller must return ModelResponse."
-            )
-        calls.append({
-            "stage": stage,
-            "logical_context": DIRECTOR_CONTEXT,
-            "model_name": assignment.model.model_name,
-            "node": assignment.model.node,
-            "endpoint_url": assignment.model.endpoint_url,
-            "request_id": response.request_id,
-            "reasoning_task": reasoning_task_count,
-        })
-        return response
 
-    current_response = call("director_execution_evaluation", messages)
-    attempt = 0
-    while True:
-        try:
-            semantics = parse_json_object(
-                current_response.text,
-                stage="Director execution evaluation",
-            )
-            evaluation_issues = validate_director_evaluation_semantics(
-                semantics,
-                valid_evidence_numbers=valid_evidence_numbers,
-                valid_checkpoint_numbers=valid_checkpoint_numbers,
-                allow_ask_guidance=allow_ask_guidance,
-            )
-        except ValueError as exc:
-            semantics = None
-            evaluation_issues = (_issue(
-                "director_evaluation", "invalid_shape", str(exc),
-            ),)
-        if not evaluation_issues:
-            assert semantics is not None
-            break
-        if attempt >= 1:
-            details = "; ".join(
-                f"{item.field}: {item.message}"
-                for item in evaluation_issues
-            )
-            raise ValueError(
-                "Director evaluation remains invalid after one "
-                f"conformance repair: {details}"
-            )
+    import json
 
-        attempt += 1
-        repair_messages = render_conformance_repair_messages(
-            artifact_kind="director_execution_evaluation",
-            invalid_output=current_response.text,
-            validation_issues=evaluation_issues,
-            valid_references={
-                "plan_ref": certified_plan["revision_ref"],
-                "step_ref": selected_step["id"],
-                "task_ref": director_task["task_id"],
-                "execution_ref": task_execution["execution_id"],
-                "evidence": numbered_evidence,
-                "accepted_checkpoints": numbered_checkpoints,
-                "conditional_field_rules": {
-                    "ACCEPT": {
-                        "backtrack_checkpoint_number": None,
-                        "guidance": None,
-                    },
-                    "REVISE": {
-                        "backtrack_checkpoint_number": (
-                            "supplied checkpoint number"
-                        ),
-                        "guidance": None,
-                        "continue_work": True,
-                    },
-                    **({
-                        "ASK_GUIDANCE": {
-                            "backtrack_checkpoint_number": None,
-                            "guidance": "complete guidance record",
-                            "continue_work": False,
-                        },
-                    } if allow_ask_guidance else {}),
-                },
-            },
-            required_output={
-                **DIRECTOR_EVALUATION_SEMANTIC_SHAPE,
-                **({} if allow_ask_guidance else {
-                    "decision": "<ACCEPT | REVISE>",
-                    "guidance": None,
-                }),
-            },
-        )
-        repaired = call(
-            "director_execution_evaluation_conformance_repair",
-            repair_messages,
-        )
-        repairs.append({
-            "artifact_kind": "director_execution_evaluation",
-            "attempt": attempt,
-            "producer_context": DIRECTOR_CONTEXT,
-            "invalid_output": current_response.text,
-            "validation_issues": [
-                {
-                    "field": item.field,
-                    "code": item.code,
-                    "message": item.message,
-                }
-                for item in evaluation_issues
-            ],
-            "repaired_output": repaired.text,
-        })
-        current_response = repaired
+    completions: list[dict[str, Any]] = []
+    context = json.loads(messages[1]["content"])
+    semantics = _planning_semantic_resolver(
+        lambda stage, selected_messages, response_format, *, producer_context:
+            call(stage, selected_messages),
+        repairs, completions, frozen_request=frozen_request,
+    )(
+        artifact_kind="director_execution_evaluation",
+        producer_context=DIRECTOR_CONTEXT,
+        initial_response=call("director_execution_evaluation", messages),
+        valid_references={
+            "plan_ref": certified_plan["revision_ref"],
+            "step_ref": selected_step["id"],
+            "task_ref": director_task["task_id"],
+            "execution_ref": task_execution["execution_id"],
+            "evidence": numbered_evidence,
+            "accepted_checkpoints": numbered_checkpoints,
+            "conditional_field_rules": context["conditional_field_rules"],
+        },
+        required_output=context["required_output"],
+        response_format=response_format,
+        validator=lambda value: validate_director_evaluation_semantics(
+            value, valid_evidence_numbers=valid_evidence_numbers,
+            valid_checkpoint_numbers=valid_checkpoint_numbers,
+            allow_ask_guidance=allow_ask_guidance,
+        ),
+        semantic_context=context,
+    )
 
     decided_at = (
         timestamp or datetime.now(timezone.utc).isoformat()
@@ -2310,9 +2288,12 @@ def evaluate_task_execution(
     return {
         "task_execution": evaluated,
         "evaluation_semantics": deepcopy(dict(semantics)),
+        "evaluation_context": deepcopy(context),
+        "evaluation_call_ref": calls[-1]["call_id"],
         "disposition": disposition,
         "calls": calls,
         "conformance_repairs": repairs,
+        "semantic_completions": completions,
         "reasoning_task_count": reasoning_task_count,
         "semantic_iteration_advanced": False,
     }
@@ -2354,9 +2335,11 @@ def request_successor_plan_semantics(
     checkpoint_plan: Mapping[str, object],
     evaluated_execution: Mapping[str, object],
     evaluation_outcome: Mapping[str, object],
+    checkpoint_execution: Optional[Mapping[str, object]] = None,
     model_caller: object = None,
     reasoning_task_count: int = 0,
     reasoning_task_limit: Optional[int] = None,
+    call_observer: object = None,
 ) -> Mapping[str, object]:
     """Ask the Director for semantics of one immutable successor Plan node."""
 
@@ -2416,6 +2399,10 @@ def request_successor_plan_semantics(
             "approach_summary": checkpoint_plan["approach_summary"],
             "steps": checkpoint_plan["steps"],
         },
+        "checkpoint_execution_evidence": (
+            _execution_evidence_projection(checkpoint_execution)
+            if checkpoint_execution is not None else None
+        ),
         "triggering_execution": {
             "execution_id": evaluated_execution["execution_id"],
             "result": evaluated_execution["result"],
@@ -2463,88 +2450,37 @@ def request_successor_plan_semantics(
             if selected_format is not None
             else None
         )
-        response = caller(
-            DIRECTOR_CONTEXT,
-            selected_messages,
-            response_format=selected_format,
+        from orchestrator import invoke_managed_model
+        return invoke_managed_model(
+            caller, DIRECTOR_CONTEXT, selected_messages,
+            stage=stage, reasoning_task=reasoning_task_count, calls=calls,
+            call_observer=call_observer, response_format=selected_format,
             chat_template_kwargs=template_kwargs,
         )
-        if not isinstance(response, ModelResponse):
-            raise TypeError(
-                "Successor Plan caller must return ModelResponse."
-            )
-        calls.append({
-            "stage": stage,
-            "logical_context": DIRECTOR_CONTEXT,
-            "model_name": assignment.model.model_name,
-            "node": assignment.model.node,
-            "endpoint_url": assignment.model.endpoint_url,
-            "request_id": response.request_id,
-            "reasoning_task": reasoning_task_count,
-        })
-        return response
 
-    current_response = call("director_successor_plan", messages)
-    attempt = 0
-    while True:
-        try:
-            semantics = parse_json_object(
-                current_response.text, stage="Director successor Plan",
-            )
-            semantic_issues = validate_successor_plan_semantics(semantics)
-        except ValueError as exc:
-            semantics = None
-            semantic_issues = (_issue(
-                "successor_plan_semantics", "invalid_shape", str(exc),
-            ),)
-        if not semantic_issues:
-            assert semantics is not None
-            break
-        if attempt >= 1:
-            details = "; ".join(
-                f"{item.field}: {item.message}" for item in semantic_issues
-            )
-            raise ValueError(
-                "Director successor Plan remains invalid after one "
-                f"conformance repair: {details}"
-            )
-        attempt += 1
-        repair_messages = render_conformance_repair_messages(
-            artifact_kind="director_successor_plan",
-            invalid_output=current_response.text,
-            validation_issues=semantic_issues,
-            valid_references={
-                "current_plan_ref": current_plan["revision_ref"],
-                "checkpoint_revision_ref": checkpoint_plan["revision_ref"],
-                "execution_ref": evaluated_execution["execution_id"],
-                "outcome_ref": evaluation_outcome["id"],
-            },
-            required_output=required_output,
-        )
-        repaired = call(
-            "director_successor_plan_conformance_repair", repair_messages,
-        )
-        repairs.append({
-            "artifact_kind": "director_successor_plan",
-            "attempt": attempt,
-            "producer_context": DIRECTOR_CONTEXT,
-            "invalid_output": current_response.text,
-            "validation_issues": [
-                {
-                    "field": item.field,
-                    "code": item.code,
-                    "message": item.message,
-                }
-                for item in semantic_issues
-            ],
-            "repaired_output": repaired.text,
-        })
-        current_response = repaired
-
+    completions: list[dict[str, Any]] = []
+    semantics = _planning_semantic_resolver(
+        lambda stage, selected_messages, response_format, *, producer_context:
+            call(stage, selected_messages),
+        repairs, completions, frozen_request=frozen_request,
+    )(
+        artifact_kind="director_successor_plan",
+        producer_context=DIRECTOR_CONTEXT,
+        initial_response=call("director_successor_plan", messages),
+        valid_references={
+            "current_plan_ref": current_plan["revision_ref"],
+            "checkpoint_revision_ref": checkpoint_plan["revision_ref"],
+            "execution_ref": evaluated_execution["execution_id"],
+            "outcome_ref": evaluation_outcome["id"],
+        },
+        required_output=required_output, response_format=response_format,
+        validator=validate_successor_plan_semantics, semantic_context=projection,
+    )
     return {
         "successor_semantics": semantics,
         "calls": calls,
         "conformance_repairs": repairs,
+        "semantic_completions": completions,
         "reasoning_task_count": reasoning_task_count,
     }
 
@@ -2559,10 +2495,12 @@ def _accept_successor_plan(
     successor_semantics: Mapping[str, Any],
     evaluated_execution: Mapping[str, Any],
     outcome: Mapping[str, Any],
+    checkpoint_execution: Optional[Mapping[str, Any]],
     model_caller: object,
     reasoning_task_count: int,
     reasoning_task_limit: Optional[int],
     timestamp: Optional[str],
+    call_observer: object = None,
 ) -> Mapping[str, Any]:
     """Apply the same Plan gate before a successor enters authoritative lineage."""
     from copy import deepcopy
@@ -2590,23 +2528,16 @@ def _accept_successor_plan(
         assert assignment.model is not None
         reasoning_task_count += 1
         selected_format = response_format if assignment.model.supports_json_schema else None
-        response = caller(
-            producer_context, messages, response_format=selected_format,
+        from orchestrator import invoke_managed_model
+        return invoke_managed_model(
+            caller, producer_context, messages,
+            stage=stage, reasoning_task=reasoning_task_count, calls=calls,
+            call_observer=call_observer, response_format=selected_format,
             chat_template_kwargs=(
                 assignment.model.structured_output_chat_template_kwargs
                 if selected_format is not None else None
             ),
         )
-        if not isinstance(response, ModelResponse):
-            raise TypeError("Semantic Plan gate caller must return ModelResponse.")
-        calls.append({
-            "stage": stage, "logical_context": producer_context,
-            "model_name": assignment.model.model_name, "node": assignment.model.node,
-            "endpoint_url": assignment.model.endpoint_url, "request_id": response.request_id,
-            "reasoning_task": reasoning_task_count,
-            "messages": deepcopy(messages), "response_text": response.text,
-        })
-        return response
 
     def assemble_candidate(
         overall: Mapping[str, Any], steps: Mapping[str, Any], attempt: int,
@@ -2656,6 +2587,10 @@ def _accept_successor_plan(
                 "triggering_outcome": deepcopy(outcome),
                 "checkpoint_revision_ref": checkpoint_revision_ref,
                 "checkpoint_outcome_ref": checkpoint_outcome_ref,
+                "checkpoint_execution_evidence": (
+                    _execution_evidence_projection(checkpoint_execution)
+                    if checkpoint_execution is not None else None
+                ),
             },
         )
         result["successor_plan"] = accepted["final_plan"]
@@ -2679,7 +2614,7 @@ def run_iteration_3(
     available_resources: Sequence[Mapping[str, object]] = (),
     model_caller: object = None,
     web_caller: object = None,
-    reasoning_task_count: int = 0,
+    reasoning_task_count: Optional[int] = None,
     reasoning_task_limit: Optional[int] = None,
     semantic_iteration_count: int = 3,
     task_ids: Sequence[str] = (),
@@ -2698,6 +2633,8 @@ def run_iteration_3(
     from orchestrator import (
         execute_managed_director_task,
         persist_managed_work_run,
+        persist_managed_call,
+        managed_work_artifact_paths,
         resolve_original_request,
         validate_guidance_authorization,
     )
@@ -2711,6 +2648,8 @@ def run_iteration_3(
         validate_task_execution_mapping,
     )
 
+    if type(reasoning_task_count) is not int or reasoning_task_count < 0:
+        raise ValueError("Prior planning reasoning-call consumption is required; supply an explicit trusted count.")
     if semantic_iteration_count != DEFAULT_JOB_BUDGET[
         "semantic_iterations"
     ]:
@@ -2739,6 +2678,11 @@ def run_iteration_3(
     def requested_id(values: Sequence[str], index: int) -> Optional[str]:
         return values[index] if index < len(values) else None
 
+    if artifact_root is not None:
+        paths = managed_work_artifact_paths(job_ref, artifact_root=artifact_root)
+        if paths["resume"].exists():
+            raise RuntimeError("Persisted managed-work state already exists; implicit replay is forbidden.")
+    prior_reasoning_task_count = reasoning_task_count
     calls: list[dict[str, object]] = []
     repairs: list[dict[str, object]] = []
     tasks: list[dict[str, object]] = []
@@ -2771,229 +2715,317 @@ def run_iteration_3(
     accepted_outcomes: dict[str, dict[str, object]] = {}
     selected_step: Mapping[str, object] | None = None
     work_index = 0
+    status = "active"
+    finalized_execution_ids: list[str] = []
 
-    while True:
-        current_plan = plan_history[-1]
-        selection = select_director_task(
-            current_plan,
-            frozen_request=frozen_request,
-            job_ref=job_ref,
-            model_caller=model_caller,
-            available_resources=available_resources,
-            task_id=requested_id(selected_task_ids, work_index),
-            reasoning_task_count=reasoning_task_count,
-            reasoning_task_limit=reasoning_task_limit,
-        )
-        reasoning_task_count = selection["reasoning_task_count"]
-        selected_step = selection["selected_step"]
-        current_task = selection["director_task"]
-        selections.append({
-            "plan_ref": current_plan["revision_ref"],
-            "semantics": deepcopy(selection["selection_semantics"]),
-        })
-        tasks.append(deepcopy(current_task))
-        calls.extend(selection["calls"])
-        repairs.extend(selection["conformance_repairs"])
+    def observe_call(record: dict[str, object]) -> None:
+        nonlocal reasoning_task_count
+        if not any(item["call_id"] == record["call_id"] for item in calls):
+            record["sequence"] = len(calls) + 1
+            calls.append(record)
+        if record.get("reasoning_task") is not None:
+            reasoning_task_count = max(reasoning_task_count, record["reasoning_task"])
+        if artifact_root is not None:
+            paths = managed_work_artifact_paths(job_ref, artifact_root=artifact_root)
+            persist_managed_call(record, paths["calls"])
 
-        execution_result = execute_managed_director_task(
-            current_task,
-            job_ref=job_ref,
-            certified_plan=current_plan,
-            selected_step=selected_step,
-            resolved_inputs=resolved_inputs,
-            resource_catalog=list(available_resources),
-            trusted_input_refs=selection["trusted_input_refs"],
-            trusted_output_contract_ref=selection[
-                "trusted_output_contract_ref"
-            ],
-            model_caller=model_caller,
-            web_caller=web_caller,
-            execution_id=requested_id(
-                selected_execution_ids, work_index,
-            ),
-            timestamp=timestamp,
-            reasoning_task_count=reasoning_task_count,
-            reasoning_task_limit=reasoning_task_limit,
-        )
-        reasoning_task_count = execution_result["reasoning_task_count"]
-        calls.extend(execution_result["calls"])
-        repairs.extend(execution_result["conformance_repairs"])
-
-        evaluation = evaluate_task_execution(
-            execution_result["task_execution"],
-            frozen_request=frozen_request,
-            prior_executions=executions,
-            certified_plan=current_plan,
-            selected_step=selected_step,
-            director_task=current_task,
-            plan_history=plan_history,
-            accepted_checkpoints=accepted_checkpoints,
-            accepted_outcomes_by_ref=accepted_outcomes,
-            allow_ask_guidance=artifact_root is not None,
-            guidance_policy=guidance_policy,
-            frontier_authorized=frontier_authorized,
-            model_caller=model_caller,
-            outcome_id=requested_id(selected_outcome_ids, work_index),
-            timestamp=timestamp,
-            reasoning_task_count=reasoning_task_count,
-            reasoning_task_limit=reasoning_task_limit,
-        )
-        reasoning_task_count = evaluation["reasoning_task_count"]
-        calls.extend(evaluation["calls"])
-        repairs.extend(evaluation["conformance_repairs"])
-        evaluated_execution = evaluation["task_execution"]
-        executions.append(deepcopy(evaluated_execution))
-        evaluations.append({
-            "plan_ref": current_plan["revision_ref"],
-            "disposition": evaluation["disposition"],
-            "semantics": deepcopy(evaluation["evaluation_semantics"]),
+    def record_boundary(stage: str, identity: str, payload: object) -> None:
+        observe_call({
+            "call_id": stage + "-" + identity,
+            "stage": stage, "logical_context": None, "reasoning_task": None,
+            "payload": deepcopy(payload),
         })
 
-        if evaluation["disposition"] == "accepted":
-            status = "accepted"
+    def snapshot() -> dict[str, object]:
+        return {
+            "status": status,
+            "certified_plan": deepcopy(plan_history[-1]),
+            "plan_history": deepcopy(plan_history),
+            "selected_step": deepcopy(dict(selected_step)) if selected_step else None,
+            "director_selections": selections,
+            "semantic_plan_assessments": plan_assessments,
+            "semantic_boundary_corrections": plan_corrections,
+            "semantic_completions": completions,
+            "semantic_plan_error": semantic_plan_error,
+            "director_tasks": tasks, "task_executions": executions,
+            "finalized_execution_ids": list(finalized_execution_ids),
+            "evaluations": evaluations, "calls": calls,
+            "conformance_repairs": repairs,
+            "reasoning_task_count": reasoning_task_count,
+            "semantic_iteration_count": semantic_iteration_count,
+            "semantic_iteration_advanced": False,
+            "execution_transition_state": execution_transition_budget_state(plan_history),
+            "accepted_checkpoints": deepcopy(accepted_checkpoints),
+            "guidance_policy": guidance_policy,
+            "frontier_authorized": frontier_authorized,
+            "available_resources": deepcopy(list(available_resources)),
+        }
+
+    def save_boundary() -> Mapping[str, object]:
+        result = snapshot()
+        if artifact_root is not None:
+            return persist_managed_work_run(
+                result, job_ref=job_ref, resolved_inputs=resolved_inputs,
+                artifact_root=artifact_root, timestamp=timestamp,
+            )
+        return result
+
+    record_boundary("planning_handoff", job_ref, {
+        "job_ref": job_ref, "root_plan_ref": plan_history[0]["revision_ref"],
+        "prior_reasoning_task_count": prior_reasoning_task_count,
+    })
+    save_boundary()
+
+    try:
+        while True:
+            current_plan = plan_history[-1]
+            selection = select_director_task(
+                current_plan,
+                frozen_request=frozen_request,
+                job_ref=job_ref,
+                model_caller=model_caller, call_observer=observe_call,
+                available_resources=available_resources,
+                prior_executions=executions,
+                task_id=requested_id(selected_task_ids, work_index),
+                reasoning_task_count=reasoning_task_count,
+                reasoning_task_limit=reasoning_task_limit,
+            )
+            reasoning_task_count = selection["reasoning_task_count"]
+            selected_step = selection["selected_step"]
+            current_task = selection["director_task"]
+            selections.append({
+                "plan_ref": current_plan["revision_ref"],
+                "semantics": deepcopy(selection["selection_semantics"]),
+            })
+            tasks.append(deepcopy(current_task))
+            save_boundary()
+            repairs.extend(selection["conformance_repairs"])
+
+            execution_result = execute_managed_director_task(
+                current_task,
+                job_ref=job_ref,
+                certified_plan=current_plan,
+                selected_step=selected_step,
+                resolved_inputs={
+                    **resolved_inputs,
+                    **{
+                        "execution:" + str(item["execution_id"]): _execution_evidence_projection(item)
+                        for item in executions
+                    },
+                },
+                resource_catalog=list(available_resources),
+                trusted_input_refs=selection["trusted_input_refs"],
+                trusted_output_contract_ref=selection[
+                    "trusted_output_contract_ref"
+                ],
+                model_caller=model_caller, call_observer=observe_call,
+                web_caller=web_caller,
+                execution_id=requested_id(
+                    selected_execution_ids, work_index,
+                ),
+                timestamp=timestamp,
+                reasoning_task_count=reasoning_task_count,
+                reasoning_task_limit=reasoning_task_limit,
+            )
+            reasoning_task_count = execution_result["reasoning_task_count"]
+            repairs.extend(execution_result["conformance_repairs"])
+
+            # Completed worker evidence survives even when evaluation never runs.
+            executions.append(deepcopy(execution_result["task_execution"]))
+            record_boundary("worker_evidence", executions[-1]["execution_id"], executions[-1])
+            save_boundary()
+
+            evaluation = evaluate_task_execution(
+                execution_result["task_execution"],
+                frozen_request=frozen_request,
+                prior_executions=executions[:-1],
+                certified_plan=current_plan,
+                selected_step=selected_step,
+                director_task=current_task,
+                plan_history=plan_history,
+                accepted_checkpoints=accepted_checkpoints,
+                accepted_outcomes_by_ref=accepted_outcomes,
+                allow_ask_guidance=artifact_root is not None,
+                guidance_policy=guidance_policy,
+                frontier_authorized=frontier_authorized,
+                model_caller=model_caller, call_observer=observe_call,
+                outcome_id=requested_id(selected_outcome_ids, work_index),
+                timestamp=timestamp,
+                reasoning_task_count=reasoning_task_count,
+                reasoning_task_limit=reasoning_task_limit,
+            )
+            reasoning_task_count = evaluation["reasoning_task_count"]
+            repairs.extend(evaluation["conformance_repairs"])
+            completions.extend(evaluation["semantic_completions"])
+            evaluated_execution = evaluation["task_execution"]
+            executions[-1] = deepcopy(evaluated_execution)
+            evaluations.append({
+                "plan_ref": current_plan["revision_ref"],
+                "task_ref": current_task["task_id"],
+                "execution_ref": evaluated_execution["execution_id"],
+                "outcome_ref": evaluated_execution["plan_execution"]["outcomes"][-1]["id"],
+                "context": deepcopy(evaluation["evaluation_context"]),
+                "call_ref": evaluation["evaluation_call_ref"],
+                "task_execution": deepcopy(evaluated_execution),
+                "disposition": evaluation["disposition"],
+                "semantics": deepcopy(evaluation["evaluation_semantics"]),
+            })
+
+            record_boundary("director_evaluation", evaluated_execution["execution_id"], evaluations[-1])
+
+            if evaluation["disposition"] == "accepted":
+                status = "accepted"
+                outcome = evaluated_execution["plan_execution"]["outcomes"][-1]
+                accepted_outcomes[outcome["id"]] = deepcopy(outcome)
+                accepted_checkpoints.append({
+                    "kind": "execution",
+                    "revision_ref": current_plan["revision_ref"],
+                    "outcome_ref": outcome["id"],
+                    "evidence_refs": list(dict.fromkeys([
+                        outcome["id"],
+                        *outcome["evidence_refs"],
+                    ])),
+                })
+                break
+            if evaluation["disposition"] == "awaiting_guidance":
+                status = "awaiting_guidance"
+                break
+
             outcome = evaluated_execution["plan_execution"]["outcomes"][-1]
-            accepted_outcomes[outcome["id"]] = deepcopy(outcome)
-            accepted_checkpoints.append({
-                "kind": "execution",
-                "revision_ref": current_plan["revision_ref"],
+            if evaluation["disposition"] == "accepted_continue":
+                accepted_outcomes[outcome["id"]] = deepcopy(outcome)
+                accepted_checkpoints.append({
+                    "kind": "execution",
+                    "revision_ref": current_plan["revision_ref"],
+                    "outcome_ref": outcome["id"],
+                    "evidence_refs": list(dict.fromkeys([
+                        outcome["id"],
+                        *outcome["evidence_refs"],
+                    ])),
+                })
+            elif evaluation["disposition"] != "revise":
+                raise RuntimeError(
+                    f"Unsupported Director disposition: {evaluation['disposition']}"
+                )
+
+            save_boundary()
+            transition_state = execution_transition_budget_state(plan_history)
+            if not transition_state["can_create_successor"]:
+                status = "execution_transition_budget_exhausted"
+                break
+
+            checkpoint_revision_ref = outcome["checkpoint_revision_ref"]
+            checkpoint_outcome_ref = outcome["checkpoint_outcome_ref"]
+            checkpoint_plan = next(
+                plan for plan in plan_history
+                if plan["revision_ref"] == checkpoint_revision_ref
+            )
+            checkpoint_execution = next((
+                item for item in executions
+                if checkpoint_outcome_ref is not None and any(
+                    accepted["id"] == checkpoint_outcome_ref
+                    for accepted in item["plan_execution"]["outcomes"]
+                )
+            ), None)
+            successor_request = request_successor_plan_semantics(
+                frozen_request=frozen_request,
+                current_plan=current_plan,
+                checkpoint_plan=checkpoint_plan,
+                evaluated_execution=evaluated_execution,
+                evaluation_outcome=outcome,
+                checkpoint_execution=checkpoint_execution,
+                model_caller=model_caller, call_observer=observe_call,
+                reasoning_task_count=reasoning_task_count,
+                reasoning_task_limit=reasoning_task_limit,
+            )
+            reasoning_task_count = successor_request["reasoning_task_count"]
+            repairs.extend(successor_request["conformance_repairs"])
+            completions.extend(successor_request["semantic_completions"])
+            acceptance = _accept_successor_plan(
+                frozen_request=frozen_request, plan_history=plan_history,
+                checkpoint_revision_ref=checkpoint_revision_ref,
+                checkpoint_outcome_ref=checkpoint_outcome_ref,
+                accepted_outcomes=accepted_outcomes,
+                successor_semantics=successor_request["successor_semantics"],
+                evaluated_execution=evaluated_execution, outcome=outcome,
+                checkpoint_execution=checkpoint_execution,
+                model_caller=model_caller, call_observer=observe_call, reasoning_task_count=reasoning_task_count,
+                reasoning_task_limit=reasoning_task_limit, timestamp=timestamp,
+            )
+            reasoning_task_count = acceptance["reasoning_task_count"]
+            repairs.extend(acceptance["conformance_repairs"])
+            completions.extend(acceptance["semantic_completions"])
+            plan_assessments.extend(acceptance["semantic_plan_assessments"])
+            plan_corrections.extend(acceptance["semantic_boundary_corrections"])
+            if "error" in acceptance:
+                status = "semantic_plan_unresolved"
+                semantic_plan_error = acceptance["error"]
+                break
+            successor = acceptance["successor_plan"]
+
+            outcome["resulting_plan_ref"] = successor["revision_ref"]
+            evaluated_execution["plan_execution"]["persistence"][
+                "updated_at"
+            ] = timestamp or evaluated_execution["provenance"]["updated_at"]
+            execution_issues = validate_task_execution_mapping(
+                evaluated_execution
+            )
+            checkpoint_issues = validate_task_execution_checkpoint_context(
+                evaluated_execution,
+                plans_by_ref={
+                    str(plan["revision_ref"]): plan for plan in plan_history
+                },
+                accepted_outcomes_by_ref=accepted_outcomes,
+            )
+            if execution_issues or checkpoint_issues:
+                details = "; ".join(
+                    f"{item.field}: {item.message}"
+                    for item in (*execution_issues, *checkpoint_issues)
+                )
+                raise ValueError(
+                    f"Successor-linked TaskExecution is invalid: {details}"
+                )
+            executions[-1] = deepcopy(evaluated_execution)
+            evaluations[-1]["resulting_plan_ref"] = successor["revision_ref"]
+            record_boundary("successor_publication", successor["revision_ref"], {
+                "plan_ref": successor["revision_ref"],
+                "execution_ref": evaluated_execution["execution_id"],
                 "outcome_ref": outcome["id"],
-                "evidence_refs": list(dict.fromkeys([
-                    outcome["id"],
-                    *outcome["evidence_refs"],
-                ])),
+                "semantic_plan_assessments": deepcopy(acceptance["semantic_plan_assessments"]),
+                "assessment_call_ref": acceptance["calls"][-1]["call_id"],
             })
-            break
-        if evaluation["disposition"] == "awaiting_guidance":
-            status = "awaiting_guidance"
-            break
+            plan_history.append(deepcopy(successor))
+            finalized_execution_ids.append(evaluated_execution["execution_id"])
+            save_boundary()
+            work_index += 1
 
-        outcome = evaluated_execution["plan_execution"]["outcomes"][-1]
-        if evaluation["disposition"] == "accepted_continue":
-            accepted_outcomes[outcome["id"]] = deepcopy(outcome)
-            accepted_checkpoints.append({
-                "kind": "execution",
-                "revision_ref": current_plan["revision_ref"],
-                "outcome_ref": outcome["id"],
-                "evidence_refs": list(dict.fromkeys([
-                    outcome["id"],
-                    *outcome["evidence_refs"],
-                ])),
-            })
-        elif evaluation["disposition"] != "revise":
-            raise RuntimeError(
-                f"Unsupported Director disposition: {evaluation['disposition']}"
-            )
+    except Exception as error:
+        if artifact_root is None:
+            raise
+        status = "interrupted"
+        semantic_plan_error = f"{type(error).__name__}: {error}"
+        # Do not replay a worker or fabricate the stage that failed.
+        return save_boundary()
 
-        transition_state = execution_transition_budget_state(plan_history)
-        if not transition_state["can_create_successor"]:
-            status = "execution_transition_budget_exhausted"
-            break
+    for execution in executions:
+        if execution["execution_id"] not in finalized_execution_ids:
+            finalized_execution_ids.append(execution["execution_id"])
+    return save_boundary()
 
-        checkpoint_revision_ref = outcome["checkpoint_revision_ref"]
-        checkpoint_outcome_ref = outcome["checkpoint_outcome_ref"]
-        checkpoint_plan = next(
-            plan for plan in plan_history
-            if plan["revision_ref"] == checkpoint_revision_ref
-        )
-        successor_request = request_successor_plan_semantics(
-            frozen_request=frozen_request,
-            current_plan=current_plan,
-            checkpoint_plan=checkpoint_plan,
-            evaluated_execution=evaluated_execution,
-            evaluation_outcome=outcome,
-            model_caller=model_caller,
-            reasoning_task_count=reasoning_task_count,
-            reasoning_task_limit=reasoning_task_limit,
-        )
-        reasoning_task_count = successor_request["reasoning_task_count"]
-        calls.extend(successor_request["calls"])
-        repairs.extend(successor_request["conformance_repairs"])
-        acceptance = _accept_successor_plan(
-            frozen_request=frozen_request, plan_history=plan_history,
-            checkpoint_revision_ref=checkpoint_revision_ref,
-            checkpoint_outcome_ref=checkpoint_outcome_ref,
-            accepted_outcomes=accepted_outcomes,
-            successor_semantics=successor_request["successor_semantics"],
-            evaluated_execution=evaluated_execution, outcome=outcome,
-            model_caller=model_caller, reasoning_task_count=reasoning_task_count,
-            reasoning_task_limit=reasoning_task_limit, timestamp=timestamp,
-        )
-        reasoning_task_count = acceptance["reasoning_task_count"]
-        calls.extend(acceptance["calls"])
-        repairs.extend(acceptance["conformance_repairs"])
-        completions.extend(acceptance["semantic_completions"])
-        plan_assessments.extend(acceptance["semantic_plan_assessments"])
-        plan_corrections.extend(acceptance["semantic_boundary_corrections"])
-        if "error" in acceptance:
-            status = "semantic_plan_unresolved"
-            semantic_plan_error = acceptance["error"]
-            break
-        successor = acceptance["successor_plan"]
 
-        outcome["resulting_plan_ref"] = successor["revision_ref"]
-        evaluated_execution["plan_execution"]["persistence"][
-            "updated_at"
-        ] = timestamp or evaluated_execution["provenance"]["updated_at"]
-        execution_issues = validate_task_execution_mapping(
-            evaluated_execution
+def _preserves_supplied_semantics(original: object, completed: object) -> bool:
+    """Check literal preservation of supplied fields; never infer equivalence."""
+    if isinstance(original, Mapping):
+        return isinstance(completed, Mapping) and all(
+            key in completed and _preserves_supplied_semantics(value, completed[key])
+            for key, value in original.items()
         )
-        checkpoint_issues = validate_task_execution_checkpoint_context(
-            evaluated_execution,
-            plans_by_ref={
-                str(plan["revision_ref"]): plan for plan in plan_history
-            },
-            accepted_outcomes_by_ref=accepted_outcomes,
+    if isinstance(original, list):
+        return isinstance(completed, list) and len(completed) >= len(original) and all(
+            _preserves_supplied_semantics(value, completed[index])
+            for index, value in enumerate(original)
         )
-        if execution_issues or checkpoint_issues:
-            details = "; ".join(
-                f"{item.field}: {item.message}"
-                for item in (*execution_issues, *checkpoint_issues)
-            )
-            raise ValueError(
-                f"Successor-linked TaskExecution is invalid: {details}"
-            )
-        executions[-1] = deepcopy(evaluated_execution)
-        evaluations[-1]["resulting_plan_ref"] = successor["revision_ref"]
-        plan_history.append(deepcopy(successor))
-        work_index += 1
-
-    result = {
-        "status": status,
-        "certified_plan": deepcopy(plan_history[-1]),
-        "plan_history": deepcopy(plan_history),
-        "selected_step": deepcopy(dict(selected_step)),
-        "director_selections": selections,
-        "semantic_plan_assessments": plan_assessments,
-        "semantic_boundary_corrections": plan_corrections,
-        "semantic_completions": completions,
-        "semantic_plan_error": semantic_plan_error,
-        "director_tasks": tasks,
-        "task_executions": executions,
-        "evaluations": evaluations,
-        "calls": calls,
-        "conformance_repairs": repairs,
-        "reasoning_task_count": reasoning_task_count,
-        "semantic_iteration_count": semantic_iteration_count,
-        "semantic_iteration_advanced": False,
-        "execution_transition_state": execution_transition_budget_state(
-            plan_history
-        ),
-        "accepted_checkpoints": deepcopy(accepted_checkpoints),
-        "guidance_policy": guidance_policy,
-        "frontier_authorized": frontier_authorized,
-        "available_resources": [
-            deepcopy(dict(resource)) for resource in available_resources
-        ],
-    }
-    if artifact_root is not None:
-        return persist_managed_work_run(
-            result,
-            job_ref=job_ref,
-            resolved_inputs=resolved_inputs,
-            artifact_root=artifact_root,
-            timestamp=timestamp,
-        )
-    return result
+    return type(original) is type(completed) and original == completed
 
 
 def _planning_semantic_resolver(
@@ -3144,6 +3176,7 @@ def _planning_semantic_resolver(
         semantic_context: Optional[Mapping[str, Any]] = None,
     ) -> dict[str, Any]:
         current_output = initial_response.text
+        completion_baseline = None
         while True:
             try:
                 semantics = parse_json_object(
@@ -3158,6 +3191,10 @@ def _planning_semantic_resolver(
                     code="invalid_shape",
                     message=str(exc),
                 ),)
+            if completion_baseline is not None and semantics is not None:
+                if not _preserves_supplied_semantics(completion_baseline, semantics):
+                    raise ValueError("Semantic completion changed an already-supplied judgment.")
+                completion_baseline = None
             missing = tuple(
                 issue
                 for issue in issues
@@ -3168,7 +3205,7 @@ def _planning_semantic_resolver(
                 for issue in issues
                 if issue.code != "missing_semantic_decision"
             )
-            if conformance:
+            if conformance and not missing:
                 if repair_attempts.get(artifact_kind, 0) >= 1:
                     details = "; ".join(
                         f"{issue.field}: {issue.message}"
@@ -3198,6 +3235,26 @@ def _planning_semantic_resolver(
                         f"{artifact_kind} remains incomplete after one "
                         f"semantic completion: {details}"
                     )
+                from copy import deepcopy
+                import re
+
+                completion_baseline = deepcopy(semantics)
+                for issue in missing:
+                    # Validation paths identify absent fields, not their meaning.
+                    parts = re.findall(r"[^.\[\]]+", issue.field)[1:]
+                    parent = completion_baseline
+                    for part in parts[:-1]:
+                        if isinstance(parent, Mapping):
+                            parent = parent.get(part)
+                        elif isinstance(parent, list) and part.isdigit() and int(part) < len(parent):
+                            parent = parent[int(part)]
+                        else:
+                            parent = None
+                            break
+                    if parts and isinstance(parent, dict):
+                        value = parent.get(parts[-1])
+                        if value is None or (isinstance(value, str) and not value.strip()):
+                            parent.pop(parts[-1], None)
                 current_output = request_semantic_completion(
                     artifact_kind=artifact_kind,
                     producer_context=producer_context,
@@ -3405,6 +3462,7 @@ def run_normal_planning(
     not execute the Plan.
     """
 
+    import json
     from copy import deepcopy
     from hashlib import sha256
     from uuid import uuid4
@@ -3725,6 +3783,11 @@ def run_normal_planning(
         )
         change_dispositions = resolve_semantic_artifact(
             artifact_kind="director_change_disposition",
+            semantic_context=json.loads(render_change_disposition_messages(
+                frozen_request,
+                gemma_proposal=gemma_proposal, qwen_proposal=qwen_proposal,
+                qwen_assessment=qwen_assessment, gemma_assessment=gemma_assessment,
+            )[1]["content"]),
             producer_context=director_ref,
             initial_response=disposition_response,
             valid_references=valid_synthesis_references,
@@ -3753,6 +3816,12 @@ def run_normal_planning(
     )
     overall_synthesis = resolve_semantic_artifact(
         artifact_kind="director_overall_synthesis",
+            semantic_context=json.loads(render_overall_synthesis_messages(
+                frozen_request,
+                gemma_proposal=gemma_proposal, qwen_proposal=qwen_proposal,
+                qwen_assessment=qwen_assessment, gemma_assessment=gemma_assessment,
+                change_dispositions=change_dispositions,
+            )[1]["content"]),
         producer_context=director_ref,
         initial_response=overall_response,
         valid_references=valid_synthesis_references,
@@ -3777,6 +3846,13 @@ def run_normal_planning(
     )
     plan_steps = resolve_semantic_artifact(
         artifact_kind="director_plan_steps",
+            semantic_context=json.loads(render_plan_steps_messages(
+                frozen_request,
+                gemma_proposal=gemma_proposal, qwen_proposal=qwen_proposal,
+                qwen_assessment=qwen_assessment, gemma_assessment=gemma_assessment,
+                change_dispositions=change_dispositions,
+                overall_synthesis=overall_synthesis,
+            )[1]["content"]),
         producer_context=director_ref,
         initial_response=steps_response,
         valid_references=valid_synthesis_references,

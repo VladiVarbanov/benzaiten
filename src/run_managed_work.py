@@ -79,7 +79,7 @@ def run_managed_work(
     artifact_root: Path | None = None,
     guidance_policy: str = "USER_ONLY",
     frontier_authorized: bool = False,
-    reasoning_task_count: int = 0,
+    reasoning_task_count: int | None = None,
 ) -> Mapping[str, object]:
     """Load one certified Plan and delegate one fresh job to Iteration 3."""
 
@@ -91,6 +91,16 @@ def run_managed_work(
 
     if not isinstance(job_ref, str) or not job_ref.strip():
         raise ValueError("job_ref must be a non-empty string.")
+    if (
+        isinstance(reasoning_task_count, bool)
+        or not isinstance(reasoning_task_count, int)
+        or reasoning_task_count < 0
+    ):
+        raise ValueError(
+            "Prior planning reasoning-call consumption is required. Supply "
+            "--reasoning-task-count from the trusted planning trace; "
+            "planning iteration 3 is not a model-call count."
+        )
     plan = load_certified_plan(Path(certified_plan_path))
     base = (
         managed_work_artifact_paths(job_ref)["root"].parent
@@ -171,7 +181,7 @@ def main() -> int:
     parser.add_argument(
         "--reasoning-task-count",
         type=int,
-        default=0,
+        default=None,
         help=(
             "Reasoning calls already consumed while producing the certified "
             "Plan; the execution controller continues from this count."

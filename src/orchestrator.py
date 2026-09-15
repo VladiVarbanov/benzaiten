@@ -700,6 +700,23 @@ def _build_task_execution(
                 "type": "configured_resource_execution_completed",
                 "session": session,
             }]
+        if validation_outcome == "failed":
+            result = None
+            status = "failed"
+            achieved_result = None
+            normalized_error = {
+                "code": "output_contract_violation",
+                "category": "validation",
+                "detail": deviation or "The structural output contract was not satisfied.",
+                "retryable": False,
+                "source": "model" if response is not None else "tool",
+            }
+            events.append({
+                "type": "output_contract_validation_failed",
+                "output_contract_ref": task["output_contract_ref"],
+                "raw_output": raw_result,
+                "detail": normalized_error["detail"],
+            })
     else:
         result = None
         normalized_error = _normalized_execution_error(error)
@@ -809,6 +826,53 @@ def _build_task_execution(
     return execution
 
 
+def invoke_managed_model(
+    caller: object, context: str, messages: tuple[dict[str, str], ...], *,
+    stage: str, reasoning_task: int, calls: list[dict[str, object]],
+    response_format: object = None, chat_template_kwargs: object = None,
+    call_observer: object = None,
+) -> ModelResponse:
+    """Record a charged attempt before dispatch; never invent a response."""
+    from uuid import uuid4
+
+    assignment = resolve_model_context(context)
+    assert assignment.model is not None
+    record = {
+        "call_id": f"call-{uuid4().hex}",
+        "stage": stage, "logical_context": context,
+        "reasoning_task": reasoning_task,
+        "model_name": assignment.model.model_name,
+        "node": assignment.model.node,
+        "endpoint_url": assignment.model.endpoint_url,
+        "messages": deepcopy(messages),
+        "response_format": deepcopy(response_format),
+        "chat_template_kwargs": deepcopy(chat_template_kwargs),
+        "attempted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    calls.append(record)
+    if call_observer is not None:
+        call_observer(record)
+    try:
+        response = caller(
+            context, messages, response_format=response_format,
+            chat_template_kwargs=chat_template_kwargs,
+        )
+        if not isinstance(response, ModelResponse):
+            raise TypeError("Managed model caller must return ModelResponse.")
+    except Exception as error:
+        record["call_error"] = {
+            "type": type(error).__name__, "detail": str(error),
+        }
+        if call_observer is not None:
+            call_observer(record)
+        raise
+    record["request_id"] = response.request_id
+    record["response_text"] = response.text
+    if call_observer is not None:
+        call_observer(record)
+    return response
+
+
 def execute_managed_director_task(
     task: Mapping[str, object],
     *,
@@ -826,6 +890,7 @@ def execute_managed_director_task(
     timestamp: str | None = None,
     reasoning_task_count: int = 0,
     reasoning_task_limit: int | None = None,
+    call_observer: object = None,
 ) -> Mapping[str, object]:
     """Validate, resolve, invoke, and record one selected managed task."""
 
@@ -931,36 +996,15 @@ def execute_managed_director_task(
             selected_response: ModelResponse | None = None
             selected_error: Exception | None = None
             try:
-                raw_response = caller(
-                    assignment.logical_context.name,
-                    selected_messages,
+                selected_response = invoke_managed_model(
+                    caller, assignment.logical_context.name, selected_messages,
+                    stage=stage, reasoning_task=reasoning_call_number,
+                    calls=worker_calls, call_observer=call_observer,
                     response_format=response_format,
                     chat_template_kwargs=template_kwargs,
                 )
-                if not isinstance(raw_response, ModelResponse):
-                    raise TypeError(
-                        "Managed worker caller must return ModelResponse."
-                    )
-                selected_response = raw_response
             except Exception as exc:
                 selected_error = exc
-            worker_calls.append({
-                "stage": stage,
-                "logical_context": assignment.logical_context.name,
-                "model_name": assignment.model.model_name,
-                "node": assignment.model.node,
-                "endpoint_url": assignment.model.endpoint_url,
-                "request_id": (
-                    selected_response.request_id
-                    if selected_response is not None
-                    else (
-                        selected_error.request_id
-                        if isinstance(selected_error, ModelClientError)
-                        else selected_execution_id
-                    )
-                ),
-                "reasoning_task": reasoning_call_number,
-            })
             return selected_response, selected_error
 
         response, call_error = call_worker(
@@ -1013,6 +1057,8 @@ def execute_managed_director_task(
             "type": "worker_conformance_repair",
             "attempt": 1,
             "producer_context": assignment.logical_context.name,
+            "invalid_output": conformance_repairs[0]["invalid_output"],
+            "repaired_output": conformance_repairs[0]["repaired_output"],
         })
     model = assignment.model
     mechanical_call_record = {
@@ -1040,6 +1086,10 @@ def execute_managed_director_task(
         ),
         "reasoning_task": reasoning_call_number,
     }
+    if not worker_calls:
+        mechanical_call_record["call_id"] = "resource-" + selected_execution_id
+        if call_observer is not None:
+            call_observer(mechanical_call_record)
     call_records = worker_calls or [mechanical_call_record]
     call_record = call_records[-1]
     return {
@@ -1171,6 +1221,8 @@ def _write_json_once(path: Path, value: object) -> None:
     """Write one immutable JSON artifact or prove an identical prior write."""
 
     serialized = _json_text(value)
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        raise ValueError(f"Managed artifact cannot resolve through a symbolic link: {path}")
     if path.exists():
         if path.read_text(encoding="utf-8") != serialized:
             raise FileExistsError(
@@ -1180,6 +1232,8 @@ def _write_json_once(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x", encoding="utf-8") as stream:
         stream.write(serialized)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def _replace_json_atomically(path: Path, value: object) -> None:
@@ -1187,6 +1241,8 @@ def _replace_json_atomically(path: Path, value: object) -> None:
 
     from uuid import uuid4
 
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        raise ValueError(f"Resume pointer cannot resolve through a symbolic link: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp-{uuid4().hex}")
     try:
@@ -1288,6 +1344,18 @@ def resolve_original_request(
     return request
 
 
+def persist_managed_call(call: Mapping[str, object], calls_path: Path) -> None:
+    """Write one immutable attempt and, only when present, its actual result."""
+    call_id = _managed_artifact_component(str(call["call_id"]))
+    calls_path.mkdir(parents=True, exist_ok=True)
+    response_keys = {"request_id", "response_text", "call_error", "payload"}
+    request = {key: deepcopy(value) for key, value in call.items() if key not in response_keys}
+    response = {key: deepcopy(value) for key, value in call.items() if key in response_keys}
+    _write_json_once(calls_path / f"{call_id}.request.json", request)
+    if response:
+        _write_json_once(calls_path / f"{call_id}.response.json", response)
+
+
 def persist_managed_work_run(
     run_result: Mapping[str, object],
     *,
@@ -1356,10 +1424,14 @@ def persist_managed_work_run(
     if not isinstance(executions, list):
         raise ValueError("Managed-work executions must be an array.")
     persisted_executions: list[dict[str, object]] = []
+    finalized = set(run_result.get("finalized_execution_ids", [e["execution_id"] for e in executions]))
     for execution in executions:
         if not isinstance(execution, Mapping):
             raise ValueError("TaskExecution artifact must be an object.")
         persisted = deepcopy(dict(execution))
+        if execution["execution_id"] not in finalized:
+            persisted_executions.append(persisted)
+            continue
         execution_id = persisted.get("execution_id")
         execution_path = paths["executions"] / (
             f"{_managed_artifact_component(str(execution_id))}.json"
@@ -1374,9 +1446,8 @@ def persist_managed_work_run(
             "save": True,
             "location": str(plan_paths[plan_ref]),
             "created_at": plan_execution["persistence"]["created_at"],
-            "updated_at": written_at,
+            "updated_at": plan_execution["persistence"]["updated_at"],
         }
-        persisted["provenance"]["updated_at"] = written_at
         issues = validate_task_execution_mapping(persisted)
         if issues:
             details = "; ".join(
@@ -1391,33 +1462,10 @@ def persist_managed_work_run(
     calls = run_result.get("calls")
     if not isinstance(calls, list):
         raise ValueError("Managed-work reasoning calls must be an array.")
-    for index, call in enumerate(calls, start=1):
-        if not isinstance(call, Mapping):
-            raise ValueError("Managed-work call record must be an object.")
-        call_identity = (
-            str(call.get("request_id") or call.get("stage") or index)
-        )
-        call_file = (
-            f"{index:04d}-{_managed_artifact_component(call_identity)}"
-        )
-        request_record = {
-            "stage": call.get("stage"),
-            "logical_context": call.get("logical_context"),
-            "reasoning_task": call.get("reasoning_task"),
-        }
-        response_record = {
-            key: deepcopy(value)
-            for key, value in call.items()
-            if key not in request_record
-        }
-        _write_json_once(
-            paths["calls"] / f"{call_file}.request.json",
-            request_record,
-        )
-        _write_json_once(
-            paths["calls"] / f"{call_file}.response.json",
-            response_record,
-        )
+    for call in calls:
+        if not isinstance(call, Mapping) or not call.get("call_id"):
+            raise ValueError("Managed-work call requires a trusted attempt identity.")
+        persist_managed_call(call, paths["calls"])
 
     run_status = run_result.get("status")
     pending_guidance_ref = None
@@ -1434,7 +1482,7 @@ def persist_managed_work_run(
             raise ValueError(
                 "awaiting_guidance requires a persisted ASK_GUIDANCE outcome."
             )
-    elif run_status in {"execution_transition_budget_exhausted", "semantic_plan_unresolved"}:
+    elif run_status in {"execution_transition_budget_exhausted", "semantic_plan_unresolved", "interrupted"}:
         resume_status = "unresolved"
     else:
         resume_status = "active"
@@ -1512,129 +1560,402 @@ def update_managed_work_guidance_policy(
 
 
 def load_managed_work_state(
+    job_ref: str, *, artifact_root: Path | None = None,
+) -> Mapping[str, object]:
+    """Fail explicitly on malformed persisted records; never reconstruct meaning."""
+    try:
+        return _load_managed_work_state(job_ref, artifact_root=artifact_root)
+    except (KeyError, TypeError, IndexError, AttributeError) as error:
+        raise ValueError(f"Malformed persisted managed-work evidence: {error}") from error
+
+
+def _load_managed_work_state(
     job_ref: str,
     *,
     artifact_root: Path | None = None,
 ) -> Mapping[str, object]:
-    """Reload and validate a passive persisted managed-work state."""
-
-    from planning import execution_transition_budget_state
+    """Reconstruct recorded progress; validate links, never rerun or judge meaning."""
+    from config import DIRECTOR_CONTEXT
+    from director import (
+        _task_execution_handoff_issues, eligible_plan_steps, numbered_managed_inputs,
+        render_director_evaluation_messages, validate_director_evaluation_semantics,
+        validate_director_task_for_execution,
+    )
+    from planning import (
+        execution_transition_budget_state, root_checkpoint_evidence_refs,
+        validate_final_plan, validate_planning_root_checkpoint, validate_successor_plan,
+        validate_architecture_assessment_semantics, parse_json_object,
+    )
     from task_execution import (
-        validate_task_execution_checkpoint_context,
-        validate_task_execution_mapping,
+        validate_task_execution_checkpoint_context, validate_task_execution_mapping,
     )
 
-    paths = managed_work_artifact_paths(
-        job_ref, artifact_root=artifact_root,
-    )
+    paths = managed_work_artifact_paths(job_ref, artifact_root=artifact_root)
 
     def read_json(path: Path) -> object:
+        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+            raise ValueError(f"Managed artifact cannot resolve through a symbolic link: {path}")
         return json.loads(path.read_text(encoding="utf-8"))
 
+    def require(condition: object, message: str) -> None:
+        if not condition:
+            raise ValueError("Invalid persisted managed-work state: " + message)
+
+    def check(issues: object, label: str) -> None:
+        if issues:
+            raise ValueError(label + ": " + "; ".join(f"{i.field}: {i.message}" for i in issues))
+
+    def unique(records: list, field: str, label: str) -> dict:
+        require(all(isinstance(item, Mapping) and isinstance(item.get(field), str)
+                    for item in records), label + " identity missing")
+        result = {item[field]: item for item in records}
+        require(len(result) == len(records), "duplicate " + label + " identity")
+        return result
+
     resume = read_json(paths["resume"])
-    resume_errors = validate_managed_work_resume(resume)
-    if resume_errors:
-        raise ValueError(
-            "Invalid persisted resume state: " + "; ".join(resume_errors)
-        )
-    if resume["job_ref"] != job_ref:
-        raise ValueError("Persisted resume job_ref does not match the request.")
-
-    plans = [
-        read_json(path)
-        for path in sorted(paths["plans"].glob("rev-*.json"))
-    ]
+    errors = validate_managed_work_resume(resume)
+    require(not errors, "invalid resume: " + "; ".join(errors))
+    require(resume["job_ref"] == job_ref, "resume job_ref mismatch")
+    plans = [read_json(p) for p in sorted(paths["plans"].glob("rev-*.json"))]
     transition_state = execution_transition_budget_state(plans)
-    plans_by_ref = {
-        plan["revision_ref"]: plan for plan in plans
-        if isinstance(plan, Mapping)
-    }
-    if resume["current_plan_ref"] != plans[-1]["revision_ref"]:
-        raise ValueError(
-            "Persisted resume does not select the latest chronological Plan."
-        )
-
-    tasks = [
-        read_json(path)
-        for path in sorted(paths["tasks"].glob("*.json"))
+    plans_by_ref = unique(plans, "revision_ref", "Plan")
+    root = plans[0]
+    check(validate_planning_root_checkpoint(root), "Invalid certified root checkpoint")
+    cycle = root["planning_cycle"]
+    # Reconstitute the inputs to the existing structural validator from preserved
+    # records, without reconstructing or interpreting the original mandate.
+    assessments = [
+        {"critique": critique, "suggested_changes": cycle["suggested_changes"] if index == 0 else []}
+        for index, critique in enumerate(cycle["critiques"])
     ]
-    executions = [
-        read_json(path)
-        for path in sorted(paths["executions"].glob("*.json"))
-    ]
-    accepted_outcomes: dict[str, Mapping[str, object]] = {}
-    all_outcomes: dict[str, Mapping[str, object]] = {}
-    for execution in executions:
-        issues = validate_task_execution_mapping(execution)
-        if issues:
-            details = "; ".join(
-                f"{item.field}: {item.message}" for item in issues
-            )
-            raise ValueError(
-                f"Invalid persisted TaskExecution: {details}"
-            )
-        for outcome in execution["plan_execution"]["outcomes"]:
-            all_outcomes[outcome["id"]] = outcome
-            if outcome["decision"] == "ACCEPT":
-                accepted_outcomes[outcome["id"]] = outcome
-    for execution in executions:
-        issues = validate_task_execution_checkpoint_context(
-            execution,
-            plans_by_ref=plans_by_ref,
-            accepted_outcomes_by_ref=accepted_outcomes,
-        )
-        if issues:
-            details = "; ".join(
-                f"{item.field}: {item.message}" for item in issues
-            )
-            raise ValueError(
-                f"Invalid persisted checkpoint lineage: {details}"
-            )
-
-    accepted_checkpoint_ref = resume["accepted_checkpoint_ref"]
-    if (
-        accepted_checkpoint_ref != plans[0]["revision_ref"]
-        and accepted_checkpoint_ref not in accepted_outcomes
-    ):
-        raise ValueError(
-            "Persisted accepted checkpoint does not resolve to root or ACCEPT."
-        )
-    pending_ref = resume["pending_guidance_outcome_ref"]
-    if pending_ref is not None and (
-        pending_ref not in all_outcomes
-        or all_outcomes[pending_ref]["decision"] != "ASK_GUIDANCE"
-    ):
-        raise ValueError(
-            "Persisted pending guidance does not resolve to ASK_GUIDANCE."
-        )
+    check(validate_final_plan(
+        root, plan_id=root["plan_id"], current_work_ref=root["current_work_ref"],
+        director_ref=DIRECTOR_CONTEXT, proposals=cycle["proposals"], assessments=assessments,
+    ), "Invalid certified root Plan")
+    require(resume["current_plan_ref"] == plans[-1]["revision_ref"],
+            "resume does not select latest chronological Plan")
+    for plan in plans:
+        expected = paths["plans"] / f"rev-{plan['revision']:04d}.json"
+        require(expected.is_file() and read_json(expected) == plan, "Plan filename/identity mismatch")
 
     request_state = read_json(paths["request"])
-    if not isinstance(request_state, Mapping):
-        raise ValueError("Persisted managed-work request must be an object.")
-    resolve_original_request(plans[0], request_state.get("resolved_inputs", {}))
-    call_requests = [
-        read_json(path)
-        for path in sorted(paths["calls"].glob("*.request.json"))
-    ]
-    reasoning_numbers = [
-        record.get("reasoning_task")
-        for record in call_requests
-        if isinstance(record, Mapping)
-        and isinstance(record.get("reasoning_task"), int)
-        and not isinstance(record.get("reasoning_task"), bool)
-    ]
+    require(isinstance(request_state, Mapping) and request_state.get("job_ref") == job_ref,
+            "request job identity mismatch")
+    resolved_inputs = request_state.get("resolved_inputs", {})
+    frozen_request = resolve_original_request(root, resolved_inputs)
+    resources = request_state.get("available_resources", [])
+    calls = []
+    for path in paths["calls"].glob("*.request.json"):
+        request = read_json(path)
+        require(isinstance(request, Mapping) and isinstance(request.get("call_id"), str),
+                "call attempt lacks trusted identity; legacy records cannot imply zero consumption")
+        require(path.name == _managed_artifact_component(request["call_id"]) + ".request.json",
+                "call filename/identity mismatch")
+        response_path = path.with_name(path.name.replace(".request.json", ".response.json"))
+        response = read_json(response_path) if response_path.exists() else {}
+        require(isinstance(response, Mapping) and not set(response).intersection(request),
+                "call response overwrites trusted attempt fields")
+        require(not ("response_text" in response and "call_error" in response),
+                "call cannot contain both a returned response and dispatch failure")
+        calls.append({**request, **response})
+    calls_by_ref = unique(calls, "call_id", "call")
+    require(all(type(c.get("sequence")) is int for c in calls), "call sequence is missing")
+    calls.sort(key=lambda c: c["sequence"])
+    require([c["sequence"] for c in calls] == list(range(1, len(calls) + 1)),
+            "call sequence is incomplete or duplicated")
+    handoffs = [c for c in calls if c["stage"] == "planning_handoff"]
+    require(len(handoffs) == 1 and handoffs[0]["sequence"] == 1,
+            "trusted prior planning consumption is required; it cannot default to zero")
+    handoff = handoffs[0].get("payload", {})
+    prior = handoff.get("prior_reasoning_task_count")
+    require(type(prior) is int and prior >= 0 and handoff.get("job_ref") == job_ref
+            and handoff.get("root_plan_ref") == root["revision_ref"], "invalid planning handoff")
+    numbers = [c["reasoning_task"] for c in calls if c.get("reasoning_task") is not None]
+    require(all(type(n) is int for n in numbers)
+            and numbers == list(range(prior + 1, prior + len(numbers) + 1)),
+            "charged attempt sequence does not extend planning consumption")
+    for c in calls:
+        if c.get("reasoning_task") is not None:
+            require(isinstance(c.get("messages"), list) and c.get("logical_context"),
+                    "charged attempt lacks actual model input/context")
+    # A response is not required for a charged attempt: dispatch may have failed.
+    reasoning_count = prior + len(numbers)
+
+    tasks = [read_json(p) for p in sorted(paths["tasks"].glob("*.json"))]
+    tasks_by_ref = unique(tasks, "task_id", "DirectorTask")
+    final_executions = [read_json(p) for p in sorted(paths["executions"].glob("*.json"))]
+    final_by_ref = unique(final_executions, "execution_id", "TaskExecution")
+    worker_calls = [c for c in calls if c["stage"] == "worker_evidence"]
+    workers = [c.get("payload") for c in worker_calls]
+    workers_by_ref = unique(workers, "execution_id", "worker evidence")
+    worker_order = {e["execution_id"]: c["sequence"] for c, e in zip(worker_calls, workers)}
+    evaluation_calls = [c for c in calls if c["stage"] == "director_evaluation"]
+    evaluations = [c.get("payload") for c in evaluation_calls]
+    evaluations_by_ref = unique(evaluations, "execution_ref", "evaluation")
+    require(len({task.get("plan_ref") for task in tasks}) == len(tasks),
+            "multiple tasks against the same immutable Plan revision")
+    require(set(final_by_ref).issubset(workers_by_ref), "final execution lacks original worker evidence")
+    require(set(evaluations_by_ref).issubset(workers_by_ref), "evaluation lacks worker evidence")
+    executions = []
+    accepted_outcomes = {}
+    all_outcomes = {}
+    checkpoints = [{
+        "number": 1, "kind": "root", "revision_ref": root["revision_ref"], "outcome_ref": None,
+        "evidence_refs": list(root_checkpoint_evidence_refs(root)),
+    }]
+
+    def comparable(execution: Mapping, *, before_evaluation: bool = False) -> dict:
+        value = deepcopy(dict(execution))
+        value.pop("persistence")
+        value["plan_execution"].pop("persistence")
+        if before_evaluation:
+            value["provenance"].pop("updated_at")
+            for key in ("outcomes", "replan_requested", "replan_reason"):
+                value["plan_execution"].pop(key)
+        else:
+            for outcome in value["plan_execution"]["outcomes"]:
+                outcome["resulting_plan_ref"] = None
+        return value
+
+    for worker in workers:
+        execution_ref = worker["execution_id"]
+        task = tasks_by_ref.get(worker.get("task_ref"))
+        require(task is not None, "execution task does not resolve")
+        plan = plans_by_ref.get(task["plan_ref"])
+        require(plan is not None, "task Plan does not resolve")
+        require(plan["revision"] == len(executions) + 1,
+                "execution order does not follow published chronological revisions")
+        step = next((s for s in plan["steps"] if s["id"] == task["target"]["locator"]), None)
+        require(step is not None, "task step does not resolve")
+        check(_task_execution_handoff_issues(
+            worker, director_task=task, certified_plan=plan, selected_step=step,
+        ), "Invalid persisted worker evidence")
+        require(worker["plan_execution"]["outcomes"] == [], "worker evidence invents evaluation")
+        require(worker["plan_execution"]["expected_result_snapshot"] == step["expected_result"]
+                and worker["plan_execution"]["expected_result_ref"] == step["id"] + "#expected_result"
+                and worker["output_contract_ref"] == task["output_contract_ref"],
+                "execution expected-result/output-contract linkage mismatch")
+        assignment = resolve_participant_role(task["participant_role"])
+        require(worker["resolved"] == {
+            "participant_role": task["participant_role"],
+            "logical_context": assignment.logical_context.name,
+            "worker_kind": assignment.worker_kind,
+            "worker_ref": assignment.logical_context.worker_ref,
+            "requirements": task["requirements"],
+        }, "configured participant resolution mismatch")
+        model = assignment.model
+        node = model.node if model is not None else AGENTS[TASK_EXECUTIVE_AGENT].node
+        deployment = worker["trace"]["deployment"]
+        require(deployment["model"] == (model.model_name if model is not None else None)
+                and deployment["compute_node"] == node
+                and deployment["host"] == COMPUTE_NODES[node].phys_host
+                and deployment["agent"] == (None if model is not None else TASK_EXECUTIVE_AGENT),
+                "configured deployment trace mismatch")
+        if worker["control"]["status"] == "completed":
+            content = worker["result"]["content"]
+            _, validation, _ = _validate_worker_result(
+                content if isinstance(content, str) else json.dumps(content),
+                task["output_contract_ref"],
+            )
+            require(validation == "passed" and worker["plan_execution"]["validation_outcome"] == "passed",
+                    "completed execution violates structural output contract")
+
+        evaluation = evaluations_by_ref.get(execution_ref)
+        selected = worker
+        if evaluation is not None:
+            require(evaluation["task_ref"] == task["task_id"]
+                    and evaluation["plan_ref"] == plan["revision_ref"],
+                    "evaluation task/Plan identity mismatch")
+            selected = evaluation["task_execution"]
+            check(_task_execution_handoff_issues(
+                selected, director_task=task, certified_plan=plan, selected_step=step,
+            ), "Invalid evaluated execution")
+            require(comparable(selected, before_evaluation=True) == comparable(worker, before_evaluation=True),
+                    "evaluation rewrites worker evidence")
+            outcomes = selected["plan_execution"]["outcomes"]
+            require(len(outcomes) == 1, "evaluation requires exactly one linked outcome")
+            outcome = outcomes[0]
+            require(evaluation["outcome_ref"] == outcome["id"] and outcome["id"] not in all_outcomes,
+                    "evaluation outcome identity mismatch")
+            context, semantics = evaluation["context"], evaluation["semantics"]
+            evidence = [{"number": 1, "kind": "task_execution", "ref": execution_ref}]
+            evidence.extend({"number": n, "kind": "task_execution", "ref": e["execution_id"]}
+                            for n, e in enumerate(executions, start=2))
+            expected_context = json.loads(render_director_evaluation_messages(
+                frozen_request=frozen_request, prior_executions=executions,
+                certified_plan=plan, selected_step=step, director_task=task,
+                task_execution=worker, numbered_evidence=evidence,
+                numbered_accepted_checkpoints=checkpoints,
+                allow_ask_guidance="ASK_GUIDANCE" in context["conditional_field_rules"],
+            )[1]["content"])
+            require(context == expected_context, "evaluation is detached from mandate or execution context")
+            check(validate_director_evaluation_semantics(
+                semantics, valid_evidence_numbers=tuple(e["number"] for e in evidence),
+                valid_checkpoint_numbers=tuple(c["number"] for c in checkpoints),
+                allow_ask_guidance="ASK_GUIDANCE" in context["conditional_field_rules"],
+            ), "Invalid recorded Director judgment")
+            response = calls_by_ref.get(evaluation.get("call_ref"), {})
+            require(response.get("logical_context") == DIRECTOR_CONTEXT
+                    and response.get("stage", "").startswith("director_execution_evaluation")
+                    and "response_text" in response
+                    and parse_json_object(response["response_text"], stage="persisted evaluation") == semantics,
+                    "validated judgment does not resolve to its Director response")
+            require(response["sequence"] > worker_order[execution_ref],
+                    "evaluation predates the worker evidence")
+            require(outcome["decision"] == semantics["decision"] and outcome["reason"] == semantics["reason"],
+                    "outcome differs from recorded semantic judgment")
+            decision = semantics["decision"]
+            evidence_refs = [evidence[n - 1]["ref"] for n in semantics["evidence_numbers"]]
+            if decision == "ACCEPT":
+                checkpoint = {"revision_ref": plan["revision_ref"], "outcome_ref": outcome["id"]}
+                disposition = "accepted_continue" if semantics["continue_work"] else "accepted"
+            else:
+                checkpoint = checkpoints[
+                    semantics["backtrack_checkpoint_number"] - 1 if decision == "REVISE" else -1
+                ]
+                evidence_refs = list(dict.fromkeys([*evidence_refs, *checkpoint["evidence_refs"]]))
+                disposition = "revise" if decision == "REVISE" else "awaiting_guidance"
+            require(evaluation["disposition"] == disposition
+                    and outcome["checkpoint_revision_ref"] == checkpoint["revision_ref"]
+                    and outcome["checkpoint_outcome_ref"] == checkpoint["outcome_ref"]
+                    and outcome["evidence_refs"] == evidence_refs,
+                    "outcome checkpoint/evidence/continuation mapping mismatch")
+            if decision == "ASK_GUIDANCE":
+                guide = deepcopy(semantics["guidance"])
+                guide["evidence_refs"] = [evidence[n - 1]["ref"] for n in guide.pop("evidence_numbers")]
+                for attempt in guide["attempts"]:
+                    attempt["evidence_refs"] = [evidence[n - 1]["ref"] for n in attempt.pop("evidence_numbers")]
+                actual = outcome["guidance"]
+                guide["target"] = resolve_guidance_target(
+                    guide["target"], guidance_policy=actual["policy"],
+                    frontier_authorized=actual["frontier_authorized"],
+                    frontier_provider_ref=None,
+                )
+                guide.update(policy=actual["policy"], frontier_authorized=actual["frontier_authorized"])
+                require(guide == actual, "guidance differs from recorded semantic judgment/authorization")
+            all_outcomes[outcome["id"]] = outcome
+            if decision == "ACCEPT":
+                accepted_outcomes[outcome["id"]] = outcome
+                checkpoints.append({
+                    "number": len(checkpoints) + 1, "kind": "execution",
+                    "revision_ref": plan["revision_ref"], "outcome_ref": outcome["id"],
+                    "evidence_refs": list(dict.fromkeys([outcome["id"], *outcome["evidence_refs"]])),
+                })
+        final = final_by_ref.get(execution_ref)
+        if final is not None:
+            check(validate_task_execution_mapping(final), "Invalid finalized TaskExecution")
+            expected_path = paths["executions"] / (_managed_artifact_component(execution_ref) + ".json")
+            require(expected_path.is_file() and read_json(expected_path) == final
+                    and final["persistence"] == {"save": True, "location": str(expected_path)},
+                    "final execution filename/persistence identity mismatch")
+            expected_persistence = {
+                **selected["plan_execution"]["persistence"],
+                "save": True,
+                "location": str(paths["plans"] / f"rev-{plan['revision']:04d}.json"),
+            }
+            require(final["plan_execution"]["persistence"] == expected_persistence,
+                    "final execution rewrites immutable Plan-evidence metadata")
+            require(comparable(final) == comparable(selected),
+                    "final TaskExecution rewrites worker/evaluation evidence")
+            selected = final
+        executions.append(selected)
+
+    for task in tasks:
+        require((paths["tasks"] / (_managed_artifact_component(task["task_id"]) + ".json")).is_file(),
+                "task filename/identity mismatch")
+        plan = plans_by_ref.get(task.get("plan_ref"))
+        require(plan is not None, "task Plan is missing")
+        step = next((s for s in eligible_plan_steps(plan) if s["id"] == task["target"]["locator"]), None)
+        require(step is not None, "task does not select an eligible Plan step")
+        prior_executions = [e for e in executions
+                            if plans_by_ref[e["plan_execution"]["plan_ref"]]["revision"] < plan["revision"]]
+        catalog = numbered_managed_inputs(eligible_plan_steps(plan), resources, prior_executions)
+        require(set(task["input_refs"]).issubset({i["ref"] for i in catalog}),
+                "task input reference is not available in its trusted catalog")
+        check(validate_director_task_for_execution(
+            task, certified_plan=plan, selected_step=step, job_ref=job_ref,
+            trusted_input_refs=task["input_refs"],
+        ), "Invalid persisted DirectorTask")
+
+    for execution in executions:
+        check(validate_task_execution_checkpoint_context(
+            execution, plans_by_ref=plans_by_ref, accepted_outcomes_by_ref=accepted_outcomes,
+        ), "Invalid persisted checkpoint lineage")
+
+    publications = [c.get("payload") for c in calls if c["stage"] == "successor_publication"]
+    publication_by_ref = unique(publications, "plan_ref", "successor publication")
+    require(set(publication_by_ref) == set(plans_by_ref) - {root["revision_ref"]},
+            "published successor lacks accepted publication evidence")
+    for index, plan in enumerate(plans[1:], start=1):
+        publication = publication_by_ref[plan["revision_ref"]]
+        execution = next((e for e in executions if e["execution_id"] == publication["execution_ref"]), None)
+        require(execution is not None, "successor trigger execution is missing")
+        outcome = next((o for o in execution["plan_execution"]["outcomes"]
+                        if o["id"] == publication["outcome_ref"]), None)
+        require(outcome is not None and outcome["resulting_plan_ref"] == plan["revision_ref"],
+                "successor trigger/resulting-Plan link is missing")
+        semantics = evaluations_by_ref[execution["execution_id"]]["semantics"]
+        require(semantics["decision"] in {"ACCEPT", "REVISE"} and semantics["continue_work"] is True
+                and execution["plan_execution"]["plan_ref"] == plans[index - 1]["revision_ref"],
+                "successor did not follow an authorized continued-work judgment")
+        assessments = publication["semantic_plan_assessments"]
+        require(assessments and assessments[-1]["compliant"] is True
+                and assessments[-1]["candidate_revision_ref"] == plan["revision_ref"],
+                "successor lacks semantic acceptance")
+        assessment_call = calls_by_ref.get(publication.get("assessment_call_ref"), {})
+        require("response_text" in assessment_call
+                and assessment_call.get("logical_context") == assessments[-1]["assessor_ref"]
+                and assessment_call.get("stage", "").startswith("architecture_"),
+                "successor acceptance does not resolve to its configured assessor response")
+        judgment = parse_json_object(assessment_call["response_text"], stage="persisted successor assessment")
+        check(validate_architecture_assessment_semantics(judgment), "Invalid successor acceptance judgment")
+        require(judgment == {"compliant": True, "violations": []},
+                "published successor was not semantically accepted")
+        primary_calls = [
+            c for c in calls
+            if c.get("stage") in {"architecture_assessment", "architecture_reassessment"}
+            and c["sequence"] <= assessment_call["sequence"]
+        ]
+        require(primary_calls, "successor acceptance lacks its grounded assessment call")
+        assessment_context = json.loads(primary_calls[-1]["messages"][1]["content"])
+        require(assessment_context.get("candidate_plan") == plan
+                and assessment_context.get("frozen_request") == frozen_request,
+                "successor assessment is detached from the published Plan or original mandate")
+        check(validate_successor_plan(
+            plan, prior_plan_history=plans[:index],
+            checkpoint_revision_ref=outcome["checkpoint_revision_ref"],
+            checkpoint_outcome_ref=outcome["checkpoint_outcome_ref"],
+            accepted_outcomes_by_ref=accepted_outcomes,
+            triggering_execution_ref=execution["execution_id"],
+            triggering_outcome_ref=outcome["id"], director_ref=DIRECTOR_CONTEXT,
+        ), "Invalid persisted successor")
+    for execution in executions:
+        for outcome in execution["plan_execution"]["outcomes"]:
+            resulting = outcome["resulting_plan_ref"]
+            if resulting is not None:
+                require(resulting in publication_by_ref
+                        and publication_by_ref[resulting]["outcome_ref"] == outcome["id"],
+                        "outcome points to an unrelated successor")
+
+    expected_checkpoint = checkpoints[-1]["outcome_ref"] or root["revision_ref"]
+    require(resume["accepted_checkpoint_ref"] == expected_checkpoint,
+            "resume does not identify the latest real accepted checkpoint")
+    last = evaluations_by_ref.get(executions[-1]["execution_id"]) if executions else None
+    if resume["status"] == "completed":
+        require(last is not None and last["semantics"]["decision"] == "ACCEPT"
+                and last["semantics"]["continue_work"] is False
+                and last["plan_ref"] == resume["current_plan_ref"]
+                and last["execution_ref"] in final_by_ref,
+                "completed requires a linked terminal Director judgment, not just a resume pointer")
+    if resume["status"] == "awaiting_guidance":
+        require(last is not None and last["semantics"]["decision"] == "ASK_GUIDANCE"
+                and last["outcome_ref"] == resume["pending_guidance_outcome_ref"]
+                and last["plan_ref"] == resume["current_plan_ref"],
+                "pending guidance does not identify the current resumable judgment")
     return {
-        "resume_state": resume,
-        "plan_history": plans,
-        "director_tasks": tasks,
-        "task_executions": executions,
-        "execution_transition_state": transition_state,
-        "reasoning_task_count": max(reasoning_numbers, default=0),
-        "resolved_inputs": deepcopy(
-            dict(request_state.get("resolved_inputs", {}))
-        ),
-        "available_resources": deepcopy(
-            list(request_state.get("available_resources", []))
-        ),
-        "artifact_root": str(paths["root"]),
+        "resume_state": resume, "plan_history": plans, "director_tasks": tasks,
+        "task_executions": executions, "evaluations": evaluations, "calls": calls,
+        "execution_transition_state": transition_state, "reasoning_task_count": reasoning_count,
+        "resolved_inputs": deepcopy(dict(resolved_inputs)),
+        "available_resources": deepcopy(list(resources)), "artifact_root": str(paths["root"]),
     }

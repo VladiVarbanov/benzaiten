@@ -634,6 +634,17 @@ def validate_task_execution_mapping(
                         "Only ASK_GUIDANCE may contain guidance details.",
                     ))
                 if decision == "ACCEPT":
+                    if (
+                        not isinstance(control, Mapping)
+                        or control.get("status") != "completed"
+                        or plan_execution.get("validation_outcome") != "passed"
+                        or not isinstance(result, Mapping)
+                        or error is not None
+                    ):
+                        issues.append(_issue(
+                            f"{field}.decision", "structural_acceptance_conflict",
+                            "ACCEPT requires a completed structurally conformant execution result.",
+                        ))
                     if checkpoint_revision_ref != plan_execution.get(
                         "plan_ref"
                     ):

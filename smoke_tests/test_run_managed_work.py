@@ -126,6 +126,7 @@ def test_launcher_refuses_implicit_replay_of_valid_persisted_state(
             job_ref="job-proof",
             resolved_inputs={"request:abc123": "sort these values"},
             artifact_root=tmp_path / "artifacts",
+            reasoning_task_count=7,
         )
 
 

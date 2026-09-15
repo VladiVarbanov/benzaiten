@@ -61,9 +61,9 @@ def certified_plan() -> dict[str, object]:
         "approach_summary": ["Perform the bounded work.", "Verify the result."],
         "current_work_ref": "request:abc123",
         "participants": {
-            "proposers": ["gemma_worker", "qwen_worker"],
+            "proposers": [],
             "supporters": [],
-            "critics": ["qwen_worker", "gemma_worker"],
+            "critics": [],
             "synthesizer": "gemma_director",
             "decision_maker": "gemma_director",
             "arbiter": None,
@@ -640,8 +640,9 @@ def test_second_malformed_worker_result_stops_after_one_repair() -> None:
     assert len(caller.calls) == 2
     assert len(result["conformance_repairs"]) == 1
     execution = result["task_execution"]
-    assert execution["control"]["status"] == "completed"
-    assert execution["result"]["status"] == "partial"
+    assert execution["control"]["status"] == "failed"
+    assert execution["result"] is None
+    assert execution["error"]["category"] == "validation"
     assert execution["plan_execution"]["validation_outcome"] == "failed"
 
 
@@ -1068,7 +1069,7 @@ def test_resource_execution_persists_and_resumes_without_reasoning_charge(
     artifact_root = tmp_path / "managed-work"
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-resource-resume",
         resolved_inputs={"request:abc123": "original request"},
         available_resources=[resource],
@@ -1491,7 +1492,7 @@ def test_iteration_3_accept_stops_without_another_model_call() -> None:
     ])
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-iteration-3",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1533,7 +1534,7 @@ def test_revise_creates_successor_plan_before_next_task() -> None:
     ])
 
     result = run_iteration_3(
-        original,
+        original, reasoning_task_count=0,
         job_ref="job-iteration-3",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1610,7 +1611,7 @@ def test_multiple_revises_create_chronological_plan_nodes() -> None:
     ])
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-iteration-3",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1654,7 +1655,7 @@ def test_revise_can_backtrack_to_a_real_execution_accept_checkpoint() -> None:
     ])
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-iteration-3",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1695,7 +1696,7 @@ def test_ask_guidance_persists_a_non_terminal_resumable_seam(
     ])
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-guidance",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1748,7 +1749,7 @@ def test_user_frontier_policy_persists_and_requires_provider(
 ) -> None:
     wrong = {"ordered": ["pear", "apple", "banana"], "count": 3}
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-frontier-policy",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=FakeCaller([
@@ -1811,7 +1812,7 @@ def test_frontier_allowed_requires_explicit_persisted_authorization(
     caller = FakeCaller([])
     with pytest.raises(ValueError, match="explicit persisted authorization"):
         run_iteration_3(
-            certified_plan(),
+            certified_plan(), reasoning_task_count=0,
             job_ref="job-invalid-frontier-policy",
             resolved_inputs={"request:abc123": "sort these values"},
             model_caller=caller,
@@ -1831,7 +1832,7 @@ def test_ask_guidance_is_not_enabled_without_persistence() -> None:
 
     with pytest.raises(ValueError, match="after one conformance repair"):
         run_iteration_3(
-            certified_plan(),
+            certified_plan(), reasoning_task_count=0,
             job_ref="job-no-guidance-persistence",
             resolved_inputs={"request:abc123": "sort these values"},
             model_caller=caller,
@@ -1844,7 +1845,7 @@ def test_completed_run_persists_immutable_artifacts_and_resume(
     tmp_path: object,
 ) -> None:
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-persisted-accept",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=FakeCaller([
@@ -1864,8 +1865,9 @@ def test_completed_run_persists_immutable_artifacts_and_resume(
     assert (paths["plans"] / "rev-0001.json").is_file()
     assert len(list(paths["tasks"].glob("*.json"))) == 1
     assert len(list(paths["executions"].glob("*.json"))) == 1
-    assert len(list(paths["calls"].glob("*.request.json"))) == 3
-    assert len(list(paths["calls"].glob("*.response.json"))) == 3
+    assert len(list(paths["calls"].glob("*.request.json"))) == 6
+    assert len(list(paths["calls"].glob("*.response.json"))) == 6
+    assert len([call for call in result["calls"] if call["reasoning_task"] is not None]) == 3
     assert result["resume_state"]["status"] == "completed"
     assert result["resume_state"]["accepted_checkpoint_ref"] == (
         "outcome-persisted"
@@ -1905,7 +1907,7 @@ def test_execution_transition_budget_stops_before_unconfigured_r5() -> None:
     caller = FakeCaller(outputs)
 
     result = run_iteration_3(
-        certified_plan(),
+        certified_plan(), reasoning_task_count=0,
         job_ref="job-iteration-3",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller,
@@ -1983,7 +1985,7 @@ def test_original_mandate_digest_checked_before_run_and_after_reload(tmp_path: P
     caller = FakeCaller([])
     with pytest.raises(ValueError, match="digest"):
         run_iteration_3(
-            plan, job_ref="tampered", resolved_inputs={plan["current_work_ref"]: "Weakened mandate"},
+            plan, reasoning_task_count=0, job_ref="tampered", resolved_inputs={plan["current_work_ref"]: "Weakened mandate"},
             model_caller=caller, artifact_root=tmp_path,
         )
     assert caller.calls == []
@@ -1997,7 +1999,7 @@ def test_original_mandate_digest_checked_before_run_and_after_reload(tmp_path: P
 
     caller = FakeCaller([valid_selection(), IMPOSSIBILITY_EVIDENCE, accept_evaluation()])
     result = run_iteration_3(
-        plan, job_ref="diagnostic", resolved_inputs=inputs,
+        plan, reasoning_task_count=0, job_ref="diagnostic", resolved_inputs=inputs,
         model_caller=caller, artifact_root=tmp_path,
     )
     assert result["status"] == "accepted"  # Supplied semantic judgment is authoritative.
@@ -2028,7 +2030,7 @@ def test_impossibility_guidance_keeps_completed_execution_and_original_mandate(t
     )
     caller = FakeCaller([valid_selection(), IMPOSSIBILITY_EVIDENCE, guidance])
     result = run_iteration_3(
-        plan, job_ref="impossible", resolved_inputs={plan["current_work_ref"]: FEASIBLE_MANDATE},
+        plan, reasoning_task_count=0, job_ref="impossible", resolved_inputs={plan["current_work_ref"]: FEASIBLE_MANDATE},
         model_caller=caller, artifact_root=tmp_path,
     )
     execution = result["task_executions"][0]
@@ -2079,7 +2081,7 @@ def test_successor_fidelity_gate_precedes_publication(corrected: bool, tmp_path:
         outputs.extend([valid_selection(), {"configuration": {"x": 12}}, accept_evaluation()])
     caller = FakeCaller(outputs)
     result = run_iteration_3(
-        plan, job_ref="successor-fidelity", resolved_inputs={plan["current_work_ref"]: request},
+        plan, reasoning_task_count=0, job_ref="successor-fidelity", resolved_inputs={plan["current_work_ref"]: request},
         model_caller=caller, artifact_root=tmp_path,
     )
     assert json.dumps(plan, sort_keys=True) == before
@@ -2145,7 +2147,7 @@ def test_intermediate_accept_preserves_overall_mandate_until_completion(tmp_path
     ]
     caller = FakeCaller(outputs)
     result = run_iteration_3(
-        plan, job_ref="intermediate", resolved_inputs=inputs,
+        plan, reasoning_task_count=0, job_ref="intermediate", resolved_inputs=inputs,
         model_caller=caller, artifact_root=tmp_path,
     )
     assert len(result["task_executions"]) == 2
@@ -2180,7 +2182,7 @@ def test_successor_gate_recovery_is_bounded_and_grounded(
         outputs.extend([valid_selection(), exact_worker_result(), accept_evaluation()])
     caller = FakeCaller(outputs)
     result = run_iteration_3(
-        certified_plan(), job_ref="gate-recovery",
+        certified_plan(), reasoning_task_count=0, job_ref="gate-recovery",
         resolved_inputs={"request:abc123": "sort these values"},
         model_caller=caller, artifact_root=tmp_path,
     )
@@ -2208,7 +2210,7 @@ def test_successor_gate_budget_exhaustion_preserves_evidence_without_transition(
         successor_plan_semantics(),
     ])
     result = run_iteration_3(
-        certified_plan(), job_ref="gate-budget",
+        certified_plan(), reasoning_task_count=0, job_ref="gate-budget",
         resolved_inputs={"request:abc123": FEASIBLE_MANDATE},
         model_caller=caller, artifact_root=tmp_path, reasoning_task_limit=4,
     )
@@ -2229,7 +2231,7 @@ def test_iteration_3_requires_certified_plan_semantic_iteration() -> None:
 
     with pytest.raises(ValueError, match="semantic iteration 3"):
         run_iteration_3(
-            certified_plan(),
+            certified_plan(), reasoning_task_count=0,
             job_ref="job-iteration-3",
             resolved_inputs={"request:abc123": "sort these values"},
             model_caller=caller,
